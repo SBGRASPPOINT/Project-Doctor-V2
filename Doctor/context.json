@@ -1,0 +1,118 @@
+{
+  "description": "This context file describes the Doctor dashboard interface, which is composed of an HTML file for the structure and a JavaScript file for the client-side logic. The dashboard allows a doctor to enter patient information and create and submit a new prescription.",
+  "html_structure": {
+    "file": "Doctor.html",
+    "description": "The HTML file provides the user interface for the doctor to manage patient prescriptions.",
+    "header": {
+      "tag": "header",
+      "content": "Contains a level 1 heading with the title 'Doctor Dashboard'."
+    },
+    "navigation": {
+      "tag": "nav",
+      "description": "Provides navigation links to other sections of the application.",
+      "links": [
+        {
+          "text": "Doctor",
+          "href": "./Doctor.html"
+        },
+        {
+          "text": "Patient",
+          "href": "../Patient/Patient.html"
+        },
+        {
+          "text": "Chemist",
+          "href": "../Chemist/Chemist.html"
+        }
+      ]
+    },
+    "forms": [
+      {
+        "id": "patient-info",
+        "description": "A form for doctors to enter or look up patient information. It includes fields for name, a hidden patient ID, gender, age, and weight.",
+        "inputs": [
+          {
+            "id": "patient-name",
+            "type": "text",
+            "label": "Patient Name"
+          },
+          {
+            "id": "patient-id",
+            "type": "text",
+            "label": "Patient ID",
+            "hidden": true
+          },
+          {
+            "id": "patient-gender",
+            "type": "select",
+            "label": "Gender"
+          },
+          {
+            "id": "patient-age",
+            "type": "number",
+            "label": "Age"
+          },
+          {
+            "id": "patient-weight",
+            "type": "number",
+            "label": "Weight"
+          }
+        ]
+      },
+      {
+        "id": "prescription-details",
+        "description": "A form to detail the medication being prescribed. It includes fields for medication name, dosage, and timing.",
+        "inputs": [
+          {
+            "id": "medication",
+            "type": "text",
+            "label": "Medication"
+          },
+          {
+            "id": "dosage",
+            "type": "text",
+            "label": "Dosage"
+          },
+          {
+            "id": "timing",
+            "type": "text",
+            "label": "Timing"
+          }
+        ]
+      },
+      {
+        "id": "submit-prescription",
+        "description": "A form containing a button to submit the complete prescription. This action should gather all the patient and prescription data and send it to the backend.",
+        "elements": [
+          {
+            "tag": "button",
+            "type": "submit",
+            "text": "Submit Prescription"
+          }
+        ]
+      }
+    ]
+  },
+  "javascript_logic": {
+    "file": "Doctor.js",
+    "description": "The JavaScript file will handle the dynamic aspects of the Doctor dashboard. Its primary role is to collect form data and send it to a backend server to create a new prescription.",
+    "event_handlers": [
+      {
+        "element_id": "submit-prescription",
+        "event": "submit",
+        "action": "Should prevent the default form submission, gather all the data from the 'patient-info' and 'prescription-details' forms, and construct a JSON object. This object should then be sent to the backend via an API call to create the prescription."
+      }
+    ],
+    "api_calls": [
+      {
+        "endpoint": "/api/prescriptions",
+        "method": "POST",
+        "description": "Creates a new prescription. The request body should contain the patient information and prescription details."
+      },
+      {
+        "endpoint": "/api/patients/search",
+        "method": "GET",
+        "description": "(Optional) Could be used to search for existing patients by name to auto-fill the patient information form."
+      }
+    ]
+  }
+}
