@@ -64,8 +64,8 @@ document.addEventListener('DOMContentLoaded', function () {
             const result = await response.json();
 
             if (response.ok) {
-                alert(`Successfully saved ${result.insertedRows} medicine(s)!`);
                 medicinesContainer.innerHTML = ''; // Clear the forms after saving
+                alert('Added to the list'); // Display custom success message
             } else {
                 throw new Error(result.message || 'Failed to save data.');
             }
