@@ -1,0 +1,111 @@
+{
+  "description": "This context file describes the Chemist dashboard interface, which is composed of an HTML file for the structure and a JavaScript file for the client-side logic. The dashboard allows a chemist to view prescriptions, check inventory, and mark prescriptions as ready for pickup.",
+  "html_structure": {
+    "file": "Chemist.html",
+    "description": "The HTML file provides the user interface for the chemist.",
+    "header": {
+      "tag": "header",
+      "content": "Contains a level 1 heading with the title 'Chemist Dashboard'."
+    },
+    "navigation": {
+      "tag": "nav",
+      "description": "Provides navigation links to other sections of the application.",
+      "links": [
+        {
+          "text": "Doctor",
+          "href": "../Doctor/Doctor.html"
+        },
+        {
+          "text": "Patient",
+          "href": "../Patient/Patient.html"
+        },
+        {
+          "text": "Chemist",
+          "href": "./Chemist.html"
+        }
+      ]
+    },
+    "forms": [
+      {
+        "id": "view-prescriptions",
+        "description": "A form for chemists to look up prescriptions. It is expected to fetch and display prescription details based on the input.",
+        "inputs": [
+          {
+            "id": "prescription-details",
+            "type": "text",
+            "label": "View Prescriptions",
+            "placeholder": "Enter prescription details"
+          },
+          {
+            "id": "patient-id",
+            "type": "text",
+            "label": "Patient ID",
+            "placeholder": "Enter patient ID",
+            "hidden": true
+          }
+        ]
+      },
+      {
+        "id": "inventory-status",
+        "description": "A form to check the status or availability of an item in the inventory.",
+        "inputs": [
+          {
+            "id": "inventory-list",
+            "type": "text",
+            "label": "Inventory Status",
+            "placeholder": "Enter inventory item"
+          }
+        ]
+      },
+      {
+        "id": "mark-ready",
+        "description": "A form that contains a button to mark a prescription as ready for patient pickup. This would likely trigger an update to the prescription's status in the backend.",
+        "elements": [
+          {
+            "tag": "button",
+            "type": "submit",
+            "text": "Mark Ready"
+          }
+        ]
+      }
+    ]
+  },
+  "javascript_logic": {
+    "file": "Chemist.js",
+    "description": "The JavaScript file will handle the dynamic aspects of the Chemist dashboard. It is expected to make API calls to a backend server to fetch and update data.",
+    "event_handlers": [
+      {
+        "element_id": "view-prescriptions",
+        "event": "submit",
+        "action": "Should prevent the default form submission, get the value from the 'prescription-details' input, and make an API call to fetch prescription data. The returned data should be displayed on the page."
+      },
+      {
+        "element_id": "inventory-status",
+        "event": "submit",
+        "action": "Should prevent the default form submission, get the value from the 'inventory-list' input, and make an API call to check the inventory. The result should be displayed."
+      },
+      {
+        "element_id": "mark-ready",
+        "event": "submit",
+        "action": "Should prevent the default form submission and send a request to the backend to update the status of a specific prescription (likely identified by the 'patient-id' or 'prescription-details' input) to 'ready'."
+      }
+    ],
+    "api_calls": [
+      {
+        "endpoint": "/api/prescriptions/{id}",
+        "method": "GET",
+        "description": "Fetches details for a specific prescription."
+      },
+      {
+        "endpoint": "/api/inventory/{item_name}",
+        "method": "GET",
+        "description": "Checks the status of a specific inventory item."
+      },
+      {
+        "endpoint": "/api/prescriptions/{id}/status",
+        "method": "PUT",
+        "description": "Updates the status of a prescription. The body of the request would likely contain the new status, e.g., { 'status': 'ready' }."
+      }
+    ]
+  }
+}
