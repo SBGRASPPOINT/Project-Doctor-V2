@@ -1,0 +1,12 @@
+    <style>
+        body { font-family: sans-serif; }
+        .container { max-width: 800px; margin: 0 auto; padding: 1rem; }
+        nav ul { list-style: none; padding: 0; }
+        nav ul li { display: inline-block; margin-right: 1rem; }
+        .medicine-entry { border: 1px solid #ccc; padding: 1rem; margin-top: 1rem; border-radius: 5px; }
+        .medicine-entry label { display: block; margin-bottom: .5rem; }
+        .medicine-entry input { width: calc(100% - 1rem); padding: .5rem; margin-bottom: 1rem; }
+        button { padding: 0.5rem 1rem; border: none; background-color: #007bff; color: white; cursor: pointer; border-radius: 3px; }
+        .remove-medicine-btn { background-color: #dc3545; }
+        h1, h2 { text-align: center; }
+    </style>

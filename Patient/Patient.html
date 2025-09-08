@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<!--<link rel="stylesheet" href="patient.css">-->
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Patient Dashboard</title>
+</head>
+<body>
+<!--
+    Header
+
+Navigation: Links to Doctor View, Patient Home, Chemist View
+
+Section
+
+Container
+
+Form 1: View Prescriptions
+
+Label for prescription list
+
+Input with placeholder/alt text
+
+Form 2: Medication Reminders
+
+Label for next medication time
+
+Input with placeholder/alt text
+
+Form 3: Request Refill
+    
+Submit button
+-->
+<header>
+    <h1>Patient Dashboard</h1>
+</header>
+<nav>
+    <ul>
+        <li><a href="../Doctor/Doctor.html" alt="Doctor's Page">Doctor</a></li>
+        <li><a href="../Patient/Patient.html" alt="Patient's Page">Patient</a></li>
+        <li><a href="../Chemist/Chemist.html" alt="Chemist's Page">Chemist</a></li>
+    </ul>
+</nav>
+<main class="container">
+    <section>
+        <form id="view-prescriptions">
+            <h2>View Prescriptions</h2>
+            <label for="prescription-list">Your Prescriptions</label>
+            <input type="text" id="prescription-list" placeholder="Prescription details will appear here" readonly>
+            <input type="hidden" id="patient-id">
+        </form>
+    </section>
+    <section>
+        <h2>Manage Medicines</h2>
+        <div id="medicines-container">
+            <!-- Dynamic medicine forms will be added here -->
+        </div>
+        <button type="button" id="add-medicine-btn">Add Medicine</button>
+        <button type="button" id="save-to-db-btn" style="background-color: #28a745; margin-top: 1rem;">Save All Medicines to Database</button>
+    </section>
+    
+    
+    <section>
+        <form id="request-refill">
+            <h2>Request Refill</h2>
+            <button type="submit">Request Refill</button>
+        </form>
+    </section>
+</main>
+<script src="patient.js"></script>
+<footer>
+    <p>&copy; 2023 Patient Dashboard</p>
+</footer>
+
+</body>
+</html>
