@@ -1,0 +1,78 @@
+{
+  "description": "This context file describes the Admin dashboard, a simple web interface designed to view data from the application's database. It consists of an HTML file for structure, a CSS file for styling, and a JavaScript file for fetching and displaying data dynamically.",
+  "html_structure": {
+    "file": "Admin.html",
+    "description": "The HTML file lays out the user interface for the Admin Data Viewer. It is divided into sections, each corresponding to a database table.",
+    "sections": [
+      {
+        "id": "patients-section",
+        "title": "Patients",
+        "purpose": "To display data from the 'Patients' table.",
+        "elements": {
+          "button": "A button with a 'data-table' attribute set to 'patients' to trigger the data fetch.",
+          "container": "A 'div' with the id 'patients-data' where the fetched data table will be rendered."
+        }
+      },
+      {
+        "id": "doctors-section",
+        "title": "Doctors",
+        "purpose": "To display data from the 'Doctors' table.",
+        "elements": {
+          "button": "A button with 'data-table' set to 'doctors'.",
+          "container": "A 'div' with id 'doctors-data'."
+        }
+      },
+      {
+        "id": "prescriptions-section",
+        "title": "Prescriptions",
+        "purpose": "To display data from the 'Prescriptions' table.",
+        "elements": {
+          "button": "A button with 'data-table' set to 'prescriptions'.",
+          "container": "A 'div' with id 'prescriptions-data'."
+        }
+      },
+      {
+        "id": "patient-medicines-section",
+        "title": "Patient-Added Medicines",
+        "purpose": "To display data from the 'PatientMedicines' table.",
+        "elements": {
+          "button": "A button with 'data-table' set to 'patientmedicines'.",
+          "container": "A 'div' with id 'patientmedicines-data'."
+        }
+      },
+      {
+        "id": "inventory-section",
+        "title": "Inventory",
+        "purpose": "To display data from the 'Inventory' table.",
+        "elements": {
+          "button": "A button with 'data-table' set to 'inventory'.",
+          "container": "A 'div' with id 'inventory-data'."
+        }
+      }
+    ]
+  },
+  "css_styling": {
+    "file": "Admin.css",
+    "description": "Provides the visual styling for the Admin dashboard, including layout, typography, colors, and table formatting to ensure the data is presented in a clean and readable manner."
+  },
+  "javascript_logic": {
+    "file": "Admin.js",
+    "description": "This script handles all the client-side dynamic functionality. It fetches data from the backend API when a user clicks a 'Fetch' button and then dynamically generates and displays this data in an HTML table without needing to reload the page.",
+    "functions": [
+      {
+        "name": "fetchAndDisplayData",
+        "description": "An asynchronous function that takes a table name and a container element. It calls the backend API, handles the response, and uses the 'createTable' helper function to render the data. It also manages loading and error states."
+      },
+      {
+        "name": "createTable",
+        "description": "A helper function that takes an array of JSON objects and dynamically constructs an HTML '<table>' element. It automatically creates table headers from the object keys and populates the table rows with the data."
+      }
+    ],
+    "event_handlers": {
+      "description": "A 'DOMContentLoaded' listener ensures the script runs after the page is loaded. It attaches a 'click' event listener to every 'Fetch' button. The listener identifies which table's data to fetch based on the button's 'data-table' attribute and calls the 'fetchAndDisplayData' function accordingly."
+    },
+    "api_calls": {
+      "description": "The script makes GET requests to a series of backend endpoints. It assumes the server exposes an API at '/api/admin/{tableName}', where '{tableName}' is dynamically replaced with the name of the table to be fetched (e.g., 'patients', 'doctors'). The backend is expected to return a JSON array of objects."
+    }
+  }
+}

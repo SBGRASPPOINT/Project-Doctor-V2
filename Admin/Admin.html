@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Dashboard</title>
+    <link rel="stylesheet" href="Admin.css">
+</head>
+<body>
+
+    <header>
+        <h1>Admin Data Viewer</h1>
+    </header>
+
+    <nav>
+        <ul>
+            <li><a href="#patients-section">Patients</a></li>
+            <li><a href="#doctors-section">Doctors</a></li>
+            <li><a href="#prescriptions-section">Prescriptions</a></li>
+            <li><a href="#patient-medicines-section">Patient Medicines</a></li>
+            <li><a href="#inventory-section">Inventory</a></li>
+        </ul>
+    </nav>
+
+    <main class="container">
+        <section id="patients-section">
+            <h2>Patients</h2>
+            <button data-table="patients">Fetch Patients</button>
+            <div class="data-container" id="patients-data"></div>
+        </section>
+
+        <section id="doctors-section">
+            <h2>Doctors</h2>
+            <button data-table="doctors">Fetch Doctors</button>
+            <div class="data-container" id="doctors-data"></div>
+        </section>
+
+        <section id="prescriptions-section">
+            <h2>Prescriptions</h2>
+            <button data-table="prescriptions">Fetch Prescriptions</button>
+            <div class="data-container" id="prescriptions-data"></div>
+        </section>
+
+        <section id="patient-medicines-section">
+            <h2>Patient-Added Medicines</h2>
+            <button data-table="patientmedicines">Fetch Patient Medicines</button>
+            <div class="data-container" id="patientmedicines-data"></div>
+        </section>
+
+        <section id="inventory-section">
+            <h2>Inventory</h2>
+            <button data-table="inventory">Fetch Inventory</button>
+            <div class="data-container" id="inventory-data"></div>
+        </section>
+    </main>
+
+    <script src="Admin.js"></script>
+</body>
+</html>
