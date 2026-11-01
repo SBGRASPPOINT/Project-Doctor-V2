@@ -123,6 +123,7 @@ public class CallRecord implements Jsonable {
         m.put("hangup_cause", hangupCause);
         m.put("recording_url", recordingUrl);
         m.put("callback_id", callbackId);
+        m.put("reminder_id", reminderId);
         m.put("created_at", createdAt == null ? null : createdAt.toString());
         return m;
     }

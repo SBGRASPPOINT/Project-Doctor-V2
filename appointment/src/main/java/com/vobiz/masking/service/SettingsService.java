@@ -102,6 +102,38 @@ public class SettingsService {
             case "announcement_text", "greeting_text", "closing_text" -> {
                 if (value.length() > 500) throw new ApiException(400, key + " is too long (max 500 chars)");
             }
+            // --- appointment / IVR / reminder keys ---
+            case "ivr_enabled", "allow_self_booking", "reminder_t24h_enabled", "reminder_t2h_enabled",
+                 "sms_fallback_enabled", "change_notification_enabled" -> {
+                if (!value.equalsIgnoreCase("true") && !value.equalsIgnoreCase("false"))
+                    throw new ApiException(400, key + " must be 'true' or 'false'");
+            }
+            case "ivr_max_hops" -> intIn(key, value, 1, 50);
+            case "booking_horizon_days" -> intIn(key, value, 1, 365);
+            case "min_booking_lead_minutes" -> intIn(key, value, 0, 10080);
+            case "max_slots_offered" -> intIn(key, value, 1, 10);
+            case "slot_granularity_min" -> intIn(key, value, 5, 120);
+            case "allow_self_cancel_hours" -> intIn(key, value, 0, 168);
+            case "reminder_t24h_lead_minutes" -> intIn(key, value, 60, 10080);
+            case "reminder_t2h_lead_minutes" -> intIn(key, value, 5, 1440);
+            case "reminder_retry_count" -> intIn(key, value, 0, 5);
+            case "reminder_retry_gap_minutes" -> intIn(key, value, 5, 1440);
+            case "reminder_scan_ms" -> intIn(key, value, 5000, 600000);
+            case "reminder_quiet_start", "reminder_quiet_end" -> {
+                if (!HH_MM.matcher(value.trim()).matches())
+                    throw new ApiException(400, key + " must be HH:mm (24h), e.g. 08:00");
+            }
+            case "clinic_timezone" -> {
+                try {
+                    ZoneId.of(value.trim());
+                } catch (Exception e) {
+                    throw new ApiException(400, "clinic_timezone must be an IANA zone, e.g. Asia/Kolkata");
+                }
+            }
+            case "clinic_name" -> {
+                if (value.isBlank() || value.length() > 120)
+                    throw new ApiException(400, "clinic_name must be 1..120 characters");
+            }
             default -> {
                 // no validation
             }
