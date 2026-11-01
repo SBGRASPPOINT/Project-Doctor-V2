@@ -21,15 +21,15 @@ Chemist Page: chemist.html# My Project
 
 ## What's in this branch
 
-1. **`vobiz-call-masking/`** — a completely separate new project: **Java 25 (LTS) + Spring Boot 4.1 + Gradle 9.8 + PostgreSQL + Lombok + Log4j2**. It implements the call-masking plan in `Vobiz-Call-Masking-Plan.md`: one public Vobiz DID (M1) bridged to hidden agent numbers, with a call log, voicemail fallback and click-to-call callbacks. Persistence uses **Spring Data JPA** (`@Entity` classes generate the PostgreSQL schema via Hibernate — no hand-written `schema.sql`) plus **JDBC** (`JdbcTemplate`) for the native log/stats queries. Setup: `cd vobiz-call-masking && docker compose up -d && ./gradlew bootRun` — full details in `vobiz-call-masking/README.md`.
+1. **`appointment/`** — a call-first **appointment booking system** built on the Vobiz call-masking service (plan in `Vobiz-Call-Masking-Plan.md`): **Java 25 (LTS) + Spring Boot 4.1 + Gradle 9.8 + PostgreSQL + Lombok + Log4j2**. Patients dial the single public DID (M1) and book / reschedule / cancel by keypad IVR; callers and staff only ever see M1 (masking preserved); automated voice reminder calls (T-24h, T-2h) plus immediate change-notification calls; voicemail → callback queue and click-to-call from the original masking service keep working. Persistence uses **Spring Data JPA** (`@Entity` classes generate the PostgreSQL schema via Hibernate — no `schema.sql`) plus **JDBC** (`JdbcTemplate`) for native list/stats queries. Setup: `cd appointment && docker compose up -d && ./gradlew bootRun` — full details in `appointment/README.md`.
 2. **Database indexes in `prescription.sql`** — secondary indexes on the entity columns most likely to be searched, filtered or joined on (details below).
 
-## New project in this repo: `vobiz-call-masking/`
+## New project in this repo: `appointment/`
 
-A completely separate **Java 25 (LTS) + Spring Boot 4.1 + Gradle 9.8 + PostgreSQL + Lombok + Log4j2**
-service that implements the call-masking plan in `Vobiz-Call-Masking-Plan.md`: one public Vobiz DID (M1)
-bridged to hidden agent numbers, with a call log, voicemail fallback and click-to-call callbacks.
-See `vobiz-call-masking/README.md` for setup (`docker compose up -d` then `./gradlew bootRun`).
+The call-masking service (one public Vobiz DID M1 bridged to hidden agent numbers, call log,
+voicemail fallback, click-to-call callbacks) extended into an appointment system: IVR self-service
+booking on the inbound call, doctor schedules/availability, reminder engine over outbound voice
+calls, and an ops console. See `appointment/README.md` for setup (`docker compose up -d` then `./gradlew bootRun`).
 
 ## Database Indexes (prescription.sql)
 
