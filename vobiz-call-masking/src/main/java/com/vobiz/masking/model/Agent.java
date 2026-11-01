@@ -1,23 +1,62 @@
 package com.vobiz.masking.model;
 
 import com.vobiz.masking.util.Json.Jsonable;
-import lombok.Data;
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.GeneratedValue;
+import jakarta.persistence.GenerationType;
+import jakarta.persistence.Id;
+import jakarta.persistence.PrePersist;
+import jakarta.persistence.Table;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
+import lombok.Setter;
 
 import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
-/** A real number (N2, N3, ...) that must stay hidden from callers. */
-@Data
+/**
+ * A real number (N2, N3, ...) that must stay hidden from callers.
+ *
+ * JPA entity: Hibernate creates/updates the {@code agents} table from this class
+ * ({@code spring.jpa.hibernate.ddl-auto=update}) — there is no hand-written schema.sql.
+ */
+@Entity
+@Table(name = "agents")
+@Getter
+@Setter
+@NoArgsConstructor
 public class Agent implements Jsonable {
 
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
+
+    @Column(nullable = false, length = 120)
     private String name;
+
+    @Column(name = "phone_e164", nullable = false, unique = true, length = 32)
     private String phoneE164;
-    private int priority;
-    private String status;      // available | busy | offline
-    private boolean active;
+
+    /** Lower rings first in sequential mode. */
+    @Column(nullable = false)
+    private int priority = 0;
+
+    /** available | busy | offline (enforced in AgentService). */
+    @Column(nullable = false, length = 16)
+    private String status = "available";
+
+    @Column(nullable = false)
+    private boolean active = true;
+
+    @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
+
+    @PrePersist
+    void onCreate() {
+        if (createdAt == null) createdAt = Instant.now();
+    }
 
     @Override
     public Map<String, Object> toMap() {
