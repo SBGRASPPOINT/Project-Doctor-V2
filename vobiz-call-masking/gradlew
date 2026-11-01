@@ -1,0 +1,12 @@
+#!/bin/sh
+# Gradle wrapper launcher. Requires java on PATH or JAVA_HOME set (JDK 17+ to run Gradle;
+# the build itself uses a Java 25 toolchain, auto-downloaded if missing).
+set -e
+APP_HOME=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+CLASSPATH="$APP_HOME/gradle/wrapper/gradle-wrapper.jar"
+if [ -n "$JAVA_HOME" ] && [ -x "$JAVA_HOME/bin/java" ]; then
+    JAVACMD="$JAVA_HOME/bin/java"
+else
+    JAVACMD=java
+fi
+exec "$JAVACMD" -classpath "$CLASSPATH" org.gradle.wrapper.GradleWrapperMain "$@"
