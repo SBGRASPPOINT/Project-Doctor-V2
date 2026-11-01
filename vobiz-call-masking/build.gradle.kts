@@ -20,7 +20,8 @@ repositories {
 dependencies {
     // Spring Boot 4 modular starters (spring-boot-starter-web was renamed to -webmvc in Boot 4)
     implementation("org.springframework.boot:spring-boot-starter-webmvc")
-    implementation("org.springframework.boot:spring-boot-starter-jdbc")       // HikariCP + DataSource for PostgreSQL
+    implementation("org.springframework.boot:spring-boot-starter-jdbc")       // HikariCP + DataSource + JdbcTemplate (native log/stats queries)
+    implementation("org.springframework.boot:spring-boot-starter-data-jpa")   // Spring Data JPA: @Entity classes in model/ generate the schema (replaces schema.sql)
     implementation("org.springframework.boot:spring-boot-starter-validation")
     implementation("org.springframework.boot:spring-boot-starter-log4j2")     // Log4j2 instead of Logback
 

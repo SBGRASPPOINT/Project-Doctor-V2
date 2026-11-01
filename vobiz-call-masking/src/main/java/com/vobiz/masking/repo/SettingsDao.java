@@ -1,45 +1,31 @@
 package com.vobiz.masking.repo;
 
-import javax.sql.DataSource;
-import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
-import java.sql.SQLException;
+import com.vobiz.masking.model.Setting;
+import org.springframework.transaction.annotation.Transactional;
+
 import java.util.LinkedHashMap;
 import java.util.Map;
 
-/** Key/value settings store (ops-console editable). */
+/**
+ * Key/value settings store (ops-console editable), backed by Spring Data JPA
+ * ({@link SettingRepository}). Since the entity id is the key, {@code save()} upserts.
+ */
 public class SettingsDao {
 
+    private final SettingRepository repo;
 
-    private final DataSource ds;
-
-    public SettingsDao(DataSource ds) {
-        this.ds = ds;
+    public SettingsDao(SettingRepository repo) {
+        this.repo = repo;
     }
 
     public Map<String, String> getAll() {
-        try (Connection c = ds.getConnection();
-             PreparedStatement ps = c.prepareStatement("SELECT key, value FROM settings ORDER BY key");
-             ResultSet rs = ps.executeQuery()) {
-            Map<String, String> m = new LinkedHashMap<>();
-            while (rs.next()) m.put(rs.getString("key"), rs.getString("value"));
-            return m;
-        } catch (SQLException e) {
-            throw new RuntimeException("DB error reading settings", e);
-        }
+        Map<String, String> m = new LinkedHashMap<>();
+        for (Setting s : repo.findAllByOrderByKeyAsc()) m.put(s.getKey(), s.getValue());
+        return m;
     }
 
     public String get(String key, String def) {
-        try (Connection c = ds.getConnection();
-             PreparedStatement ps = c.prepareStatement("SELECT value FROM settings WHERE key = ?")) {
-            ps.setString(1, key);
-            try (ResultSet rs = ps.executeQuery()) {
-                return rs.next() ? rs.getString("value") : def;
-            }
-        } catch (SQLException e) {
-            throw new RuntimeException("DB error reading setting " + key, e);
-        }
+        return repo.findById(key).map(Setting::getValue).orElse(def);
     }
 
     public int getInt(String key, int def) {
@@ -54,14 +40,8 @@ public class SettingsDao {
         return Boolean.parseBoolean(get(key, String.valueOf(def)));
     }
 
+    @Transactional
     public void put(String key, String value) {
-        String sql = "INSERT INTO settings(key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value";
-        try (Connection c = ds.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {
-            ps.setString(1, key);
-            ps.setString(2, value);
-            ps.executeUpdate();
-        } catch (SQLException e) {
-            throw new RuntimeException("DB error writing setting " + key, e);
-        }
+        repo.save(new Setting(key, value));
     }
 }

@@ -2,11 +2,10 @@ package com.vobiz.masking.repo;
 
 import com.vobiz.masking.model.CallRecord;
 import com.vobiz.masking.util.Json;
-import javax.sql.DataSource;
-import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
-import java.sql.SQLException;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.RowMapper;
+import org.springframework.transaction.annotation.Transactional;
+
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -15,152 +14,119 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
-/** Plain-JDBC DAO over the calls table. */
+/**
+ * Calls store. Two halves, as requested:
+ * <ul>
+ *   <li>single-row operations go through JPA ({@link CallRepository}) — load entity, mutate, save;</li>
+ *   <li>the filtered call-log view and the dashboard aggregates stay native SQL
+ *       (joins, ILIKE, FILTER) and run through {@link JdbcTemplate}.</li>
+ * </ul>
+ */
 public class CallDao {
 
-    private static final String COLUMNS =
-            "id, call_uuid, direction, caller_number, dialed_number, agent_id, dialed_agents, status, "
-                    + "started_at, answered_at, ended_at, duration_sec, hangup_cause, recording_url, callback_id, created_at";
+    private final CallRepository repo;
+    private final JdbcTemplate jdbc;
 
-    private final DataSource ds;
-
-    public CallDao(DataSource ds) {
-        this.ds = ds;
+    public CallDao(CallRepository repo, JdbcTemplate jdbc) {
+        this.repo = repo;
+        this.jdbc = jdbc;
     }
 
+    @Transactional
     public CallRecord insertInbound(String callUuid, String from, String to) {
-        String sql = "INSERT INTO calls(call_uuid, direction, caller_number, dialed_number, status, started_at) "
-                + "VALUES (?, 'inbound', ?, ?, 'in_progress', now()) RETURNING " + COLUMNS;
-        try (Connection c = ds.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {
-            ps.setString(1, callUuid);
-            ps.setString(2, from);
-            ps.setString(3, to);
-            try (ResultSet rs = ps.executeQuery()) {
-                if (rs.next()) return map(rs);
-                throw new IllegalStateException("insert returned no row");
-            }
-        } catch (SQLException e) {
-            throw new RuntimeException("DB error inserting call " + callUuid, e);
-        }
+        CallRecord c = new CallRecord();
+        c.setCallUuid(callUuid);
+        c.setDirection("inbound");
+        c.setCallerNumber(from);
+        c.setDialedNumber(to);
+        c.setStatus("in_progress");
+        c.setStartedAt(Instant.now());
+        return repo.save(c);
     }
 
+    @Transactional
     public CallRecord insertOutbound(String callUuid, String customerNumber, long agentId, long callbackId) {
-        String sql = "INSERT INTO calls(call_uuid, direction, caller_number, dialed_number, agent_id, callback_id, status, started_at) "
-                + "VALUES (?, 'outbound', ?, ?, ?, ?, 'in_progress', now()) RETURNING " + COLUMNS;
-        try (Connection c = ds.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {
-            ps.setString(1, callUuid);
-            ps.setString(2, customerNumber);
-            ps.setString(3, "via M1");
-            ps.setLong(4, agentId);
-            ps.setLong(5, callbackId);
-            try (ResultSet rs = ps.executeQuery()) {
-                if (rs.next()) return map(rs);
-                throw new IllegalStateException("insert returned no row");
-            }
-        } catch (SQLException e) {
-            throw new RuntimeException("DB error inserting outbound call " + callUuid, e);
-        }
+        CallRecord c = new CallRecord();
+        c.setCallUuid(callUuid);
+        c.setDirection("outbound");
+        c.setCallerNumber(customerNumber);
+        c.setDialedNumber("via M1");
+        c.setAgentId(agentId);
+        c.setCallbackId(callbackId);
+        c.setStatus("in_progress");
+        c.setStartedAt(Instant.now());
+        return repo.save(c);
     }
 
     public Optional<CallRecord> findByUuid(String callUuid) {
-        try (Connection c = ds.getConnection();
-             PreparedStatement ps = c.prepareStatement("SELECT " + COLUMNS + " FROM calls WHERE call_uuid = ?")) {
-            ps.setString(1, callUuid);
-            try (ResultSet rs = ps.executeQuery()) {
-                return rs.next() ? Optional.of(map(rs)) : Optional.empty();
-            }
-        } catch (SQLException e) {
-            throw new RuntimeException("DB error finding call " + callUuid, e);
-        }
+        return repo.findByCallUuid(callUuid);
     }
 
     public Optional<CallRecord> findById(long id) {
-        try (Connection c = ds.getConnection();
-             PreparedStatement ps = c.prepareStatement("SELECT " + COLUMNS + " FROM calls WHERE id = ?")) {
-            ps.setLong(1, id);
-            try (ResultSet rs = ps.executeQuery()) {
-                return rs.next() ? Optional.of(map(rs)) : Optional.empty();
-            }
-        } catch (SQLException e) {
-            throw new RuntimeException("DB error finding call id " + id, e);
-        }
+        return repo.findById(id);
     }
 
     /** Append one agent id to the JSONB dialed_agents array. */
+    @Transactional
     public void appendDialedAgent(String callUuid, long agentId) {
-        String sql = "UPDATE calls SET dialed_agents = COALESCE(dialed_agents, '[]'::jsonb) || ?::jsonb WHERE call_uuid = ?";
-        try (Connection c = ds.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {
-            ps.setString(1, "[" + agentId + "]");
-            ps.setString(2, callUuid);
-            ps.executeUpdate();
-        } catch (SQLException e) {
-            throw new RuntimeException("DB error appending dialed agent", e);
-        }
+        repo.findByCallUuid(callUuid).ifPresent(c -> {
+            List<Long> dialed = c.getDialedAgents();
+            if (dialed == null) {
+                dialed = new ArrayList<>();
+                c.setDialedAgents(dialed);
+            }
+            dialed.add(agentId);
+            repo.save(c);
+        });
     }
 
     public List<Long> getDialedAgents(String callUuid) {
-        try (Connection c = ds.getConnection();
-             PreparedStatement ps = c.prepareStatement("SELECT dialed_agents FROM calls WHERE call_uuid = ?")) {
-            ps.setString(1, callUuid);
-            try (ResultSet rs = ps.executeQuery()) {
-                if (!rs.next()) return List.of();
-                return parseIds(rs.getString("dialed_agents"));
-            }
-        } catch (SQLException e) {
-            throw new RuntimeException("DB error reading dialed agents", e);
-        }
+        return repo.findByCallUuid(callUuid)
+                .map(c -> c.getDialedAgents() == null ? List.<Long>of() : List.copyOf(c.getDialedAgents()))
+                .orElse(List.of());
     }
 
+    @Transactional
     public void markAnswered(String callUuid, Long agentId) {
-        String sql = "UPDATE calls SET status = 'answered', answered_at = now(), agent_id = COALESCE(?, agent_id) WHERE call_uuid = ?";
-        try (Connection c = ds.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {
-            if (agentId == null) ps.setNull(1, java.sql.Types.BIGINT); else ps.setLong(1, agentId);
-            ps.setString(2, callUuid);
-            ps.executeUpdate();
-        } catch (SQLException e) {
-            throw new RuntimeException("DB error marking call answered", e);
-        }
+        repo.findByCallUuid(callUuid).ifPresent(c -> {
+            c.setStatus("answered");
+            c.setAnsweredAt(Instant.now());
+            if (agentId != null) c.setAgentId(agentId);
+            repo.save(c);
+        });
     }
 
+    @Transactional
     public void setStatus(String callUuid, String status, String cause) {
-        String sql = "UPDATE calls SET status = ?, hangup_cause = COALESCE(?, hangup_cause) WHERE call_uuid = ?";
-        try (Connection c = ds.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {
-            ps.setString(1, status);
-            ps.setString(2, cause);
-            ps.setString(3, callUuid);
-            ps.executeUpdate();
-        } catch (SQLException e) {
-            throw new RuntimeException("DB error setting call status", e);
-        }
+        repo.findByCallUuid(callUuid).ifPresent(c -> {
+            c.setStatus(status);
+            if (cause != null) c.setHangupCause(cause);
+            repo.save(c);
+        });
     }
 
+    @Transactional
     public void markVoicemail(String callUuid, String recordingUrl) {
-        String sql = "UPDATE calls SET status = 'voicemail', recording_url = COALESCE(?, recording_url) WHERE call_uuid = ?";
-        try (Connection c = ds.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {
-            ps.setString(1, recordingUrl);
-            ps.setString(2, callUuid);
-            ps.executeUpdate();
-        } catch (SQLException e) {
-            throw new RuntimeException("DB error marking voicemail", e);
-        }
+        repo.findByCallUuid(callUuid).ifPresent(c -> {
+            c.setStatus("voicemail");
+            if (recordingUrl != null) c.setRecordingUrl(recordingUrl);
+            repo.save(c);
+        });
     }
 
     /** Final hangup event: duration + cause; a still-ringing call counts as no_answer. */
+    @Transactional
     public void finalizeHangup(String callUuid, Integer durationSec, String cause) {
-        String sql = "UPDATE calls SET ended_at = now(), duration_sec = COALESCE(?, duration_sec), "
-                + "hangup_cause = COALESCE(?, hangup_cause), "
-                + "status = CASE WHEN status = 'in_progress' THEN 'no_answer' ELSE status END "
-                + "WHERE call_uuid = ?";
-        try (Connection c = ds.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {
-            if (durationSec == null) ps.setNull(1, java.sql.Types.INTEGER); else ps.setInt(1, durationSec);
-            ps.setString(2, cause);
-            ps.setString(3, callUuid);
-            ps.executeUpdate();
-        } catch (SQLException e) {
-            throw new RuntimeException("DB error finalizing call " + callUuid, e);
-        }
+        repo.findByCallUuid(callUuid).ifPresent(c -> {
+            c.setEndedAt(Instant.now());
+            if (durationSec != null) c.setDurationSec(durationSec);
+            if (cause != null) c.setHangupCause(cause);
+            if ("in_progress".equals(c.getStatus())) c.setStatus("no_answer");
+            repo.save(c);
+        });
     }
 
+    /** Filtered call log: status / date range / free-text (ILIKE on numbers) + agent-name join. Native SQL via JDBC. */
     public List<CallRecord> list(String status, String fromDate, String toDate, String q, int limit) {
         StringBuilder sql = new StringBuilder(
                 "SELECT c.*, a.name AS agent_name FROM calls c LEFT JOIN agents a ON a.id = c.agent_id WHERE 1=1 ");
@@ -184,18 +150,10 @@ public class CallDao {
         }
         sql.append("ORDER BY c.created_at DESC LIMIT ?");
         params.add(limit);
-        try (Connection c = ds.getConnection(); PreparedStatement ps = c.prepareStatement(sql.toString())) {
-            for (int i = 0; i < params.size(); i++) ps.setObject(i + 1, params.get(i));
-            try (ResultSet rs = ps.executeQuery()) {
-                List<CallRecord> out = new ArrayList<>();
-                while (rs.next()) out.add(map(rs));
-                return out;
-            }
-        } catch (SQLException e) {
-            throw new RuntimeException("DB error listing calls", e);
-        }
+        return jdbc.query(sql.toString(), ROW_MAPPER, params.toArray());
     }
 
+    /** Dashboard counters. Native SQL via JDBC (FILTER aggregates). */
     public Map<String, Object> stats() {
         String sql = "SELECT count(*) AS total, "
                 + "count(*) FILTER (WHERE direction = 'inbound') AS inbound, "
@@ -204,25 +162,22 @@ public class CallDao {
                 + "count(*) FILTER (WHERE created_at >= current_date AND status = 'answered') AS answered_today, "
                 + "count(*) FILTER (WHERE status = 'voicemail') AS voicemails "
                 + "FROM calls";
-        try (Connection c = ds.getConnection();
-             PreparedStatement ps = c.prepareStatement(sql);
-             ResultSet rs = ps.executeQuery()) {
-            Map<String, Object> m = new LinkedHashMap<>();
-            if (rs.next()) {
-                m.put("calls_total", rs.getLong("total"));
-                m.put("calls_inbound", rs.getLong("inbound"));
-                m.put("calls_live", rs.getLong("live"));
-                m.put("calls_today", rs.getLong("today"));
-                m.put("calls_answered_today", rs.getLong("answered_today"));
-                m.put("calls_voicemail", rs.getLong("voicemails"));
-            }
-            return m;
-        } catch (SQLException e) {
-            throw new RuntimeException("DB error computing call stats", e);
-        }
+        Map<String, Object> row = jdbc.queryForMap(sql);
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("calls_total", lng(row.get("total")));
+        m.put("calls_inbound", lng(row.get("inbound")));
+        m.put("calls_live", lng(row.get("live")));
+        m.put("calls_today", lng(row.get("today")));
+        m.put("calls_answered_today", lng(row.get("answered_today")));
+        m.put("calls_voicemail", lng(row.get("voicemails")));
+        return m;
     }
 
-    private static CallRecord map(ResultSet rs) throws SQLException {
+    private static long lng(Object v) {
+        return v instanceof Number n ? n.longValue() : 0L;
+    }
+
+    private static final RowMapper<CallRecord> ROW_MAPPER = (rs, rowNum) -> {
         CallRecord c = new CallRecord();
         c.setId(rs.getLong("id"));
         c.setCallUuid(rs.getString("call_uuid"));
@@ -233,22 +188,22 @@ public class CallDao {
         c.setAgentId(rs.wasNull() ? null : agentId);
         c.setDialedAgents(parseIds(rs.getString("dialed_agents")));
         c.setStatus(rs.getString("status"));
-        c.setStartedAt(AgentDao.toInstant(rs.getTimestamp("started_at")));
-        c.setAnsweredAt(AgentDao.toInstant(rs.getTimestamp("answered_at")));
-        c.setEndedAt(AgentDao.toInstant(rs.getTimestamp("ended_at")));
+        c.setStartedAt(toInstant(rs.getTimestamp("started_at")));
+        c.setAnsweredAt(toInstant(rs.getTimestamp("answered_at")));
+        c.setEndedAt(toInstant(rs.getTimestamp("ended_at")));
         int dur = rs.getInt("duration_sec");
         c.setDurationSec(rs.wasNull() ? null : dur);
         c.setHangupCause(rs.getString("hangup_cause"));
         c.setRecordingUrl(rs.getString("recording_url"));
         long cb = rs.getLong("callback_id");
         c.setCallbackId(rs.wasNull() ? null : cb);
-        c.setCreatedAt(AgentDao.toInstant(rs.getTimestamp("created_at")));
-        try {
-            c.setAgentName(rs.getString("agent_name"));
-        } catch (SQLException ignore) {
-            // agent_name is only present in joined queries
-        }
+        c.setCreatedAt(toInstant(rs.getTimestamp("created_at")));
+        c.setAgentName(rs.getString("agent_name"));
         return c;
+    };
+
+    private static Instant toInstant(Timestamp t) {
+        return t == null ? null : t.toInstant();
     }
 
     private static List<Long> parseIds(String json) {
