@@ -30,6 +30,20 @@ import java.util.Map;
 @NoArgsConstructor
 public class IvrSession {
 
+    // ---- JPA relations (LAZY, read-only onto the id columns) ----
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "patient_id", insertable = false, updatable = false)
+    private Patient patient;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "appointment_id", insertable = false, updatable = false)
+    private Appointment appointment;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "reminder_id", insertable = false, updatable = false)
+    private Reminder reminder;
+
     /** Vobiz CallUUID — the primary key. */
     @Id
     @Column(name = "call_uuid", length = 64)

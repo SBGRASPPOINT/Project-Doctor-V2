@@ -39,6 +39,20 @@ import java.util.Map;
 @NoArgsConstructor
 public class CallRecord implements Jsonable {
 
+    // ---- JPA relations (LAZY, read-only onto the existing id columns) ----
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "agent_id", insertable = false, updatable = false)
+    private Agent agent;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "callback_id", insertable = false, updatable = false)
+    private CallbackRequest callback;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "reminder_id", insertable = false, updatable = false)
+    private Reminder reminder;
+
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;

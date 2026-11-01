@@ -26,6 +26,11 @@ import java.util.Map;
 @NoArgsConstructor
 public class AppointmentEvent implements Jsonable {
 
+    /** Owning many-to-one side of the audit trail — read-only view onto appointment_id. */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "appointment_id", insertable = false, updatable = false)
+    private Appointment appointment;
+
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
