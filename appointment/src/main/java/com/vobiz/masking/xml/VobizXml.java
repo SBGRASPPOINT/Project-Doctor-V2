@@ -94,4 +94,33 @@ public final class VobizXml {
     public static String bridgeOutbound(String callerId, String to) {
         return response(dial(List.of(to), callerId, 60, null, true) + hangup());
     }
+
+    /**
+     * Gather DTMF digits. The digit(s) are POSTed to actionUrl as {@code Digits}.
+     * On timeout, execution continues with whatever follows the Gather in the document
+     * (typically a {@link #redirect} to a no-input handler).
+     */
+    public static String gather(String promptXml, String actionUrl, int numDigits, int timeoutSec) {
+        StringBuilder sb = new StringBuilder("<Gather numDigits=\"").append(numDigits)
+                .append("\" timeout=\"").append(timeoutSec).append("\"");
+        if (actionUrl != null && !actionUrl.isBlank()) {
+            sb.append(" action=\"").append(escape(actionUrl)).append("\" method=\"POST\"");
+        }
+        sb.append(">").append(promptXml).append("</Gather>");
+        return sb.toString();
+    }
+
+    /** Continue call flow at another URL (POSTs the same call params, incl. CallUUID). */
+    public static String redirect(String url) {
+        return "<Redirect method=\"POST\">" + escape(url) + "</Redirect>";
+    }
+
+    public static String pause(int seconds) {
+        return "<Pause length=\"" + seconds + "\"/>";
+    }
+
+    /** Play a pre-recorded audio file (for later use; prompts are TTS <Speak> today). */
+    public static String play(String url) {
+        return "<Play>" + escape(url) + "</Play>";
+    }
 }

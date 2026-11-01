@@ -197,6 +197,8 @@ public class CallDao {
         c.setRecordingUrl(rs.getString("recording_url"));
         long cb = rs.getLong("callback_id");
         c.setCallbackId(rs.wasNull() ? null : cb);
+        long rem = rs.getLong("reminder_id");
+        c.setReminderId(rs.wasNull() ? null : rem);
         c.setCreatedAt(toInstant(rs.getTimestamp("created_at")));
         c.setAgentName(rs.getString("agent_name"));
         return c;
