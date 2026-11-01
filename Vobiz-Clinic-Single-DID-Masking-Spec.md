@@ -58,6 +58,9 @@ patient call; anything outbound was created by your own backend and carries a to
 Do not try to let executives "dial M to call out" — that collides with inbound routing and
 needs a PIN flow. It is listed as a fallback in §10, not part of this build.
 
+**But the executive's handset has no such information** — that is a separate problem, and it is
+solved in §4.2, not here. Read that section before you build the outbound flow.
+
 ---
 
 ## 2. Glossary and configuration
@@ -67,6 +70,7 @@ needs a PIN flow. It is listed as a fallback in §10, not part of this build.
 | **M** | the clinic DID (E.164), one per clinic |
 | **CE** | communication executive — a real mobile number behind M, max 3 per clinic |
 | **caller-ID mode** | per-clinic policy: `mask` (CE sees M) or `reveal` (CE sees patient number) |
+| **M_CB** | optional second *internal* DID, used only as the caller ID on callbacks to the executive (§4.2) |
 
 | Key | Example | Notes |
 |---|---|---|
@@ -85,6 +89,7 @@ needs a PIN flow. It is listed as a fallback in §10, not part of this build.
 clinics
   id, name
   did_e164              UNIQUE          -- M; one row per clinic, one number per clinic
+  callback_did_e164     NULL            -- M_CB, optional, internal only (§4.2)
   ring_timeout_s        default 25      -- how long to ring the group
   caller_id_mode        mask | reveal
   recording_enabled     bool
@@ -177,6 +182,99 @@ tell a new patient from a follow-up, or from a wrong number. Three mitigations, 
 Recommendation: build (1) and (3). Ship `mask` as the default for new clinics, since it is the
 setting that keeps patient numbers off personal handsets — the DPDP-friendlier posture.
 
+### 4.2 Direction signalling — how the executive knows inbound from outbound
+
+One DID means the executive's handset presents the same number in both directions, so the phone
+alone cannot tell them "a patient is calling the clinic" from "this is the callback I just
+placed". That is a genuine usability gap of the single-DID design, and it has to be closed
+deliberately rather than hoped away.
+
+First, note where the problem actually bites: in **`reveal` mode it mostly disappears** — an
+inbound call shows the patient's number, while an outbound callback rings the executive from the
+clinic DID. The ambiguity is specific to **`mask` mode**, where both legs present M.
+
+Four signals, in order of reliability. Build signal 1 regardless; layer the others on top.
+
+| # | Signal | Reliability | Cost |
+|---|---|---|---|
+| 1 | A different spoken announcement per direction, on answer | works on any handset, any carrier, including a desk phone | one extra webhook (inbound), one extra `Speak` (outbound) |
+| 2 | A different caller ID per direction — second, internal DID for callbacks | the phone's own screen shows a different number | one extra DID per clinic, never published to patients |
+| 3 | `callerName` set to a direction label | best-effort: carrier and handset decide whether to display it | free |
+| 4 | App screen-pop / push stating direction and patient | needs the app open and a realtime channel | your app |
+
+**Signal 1 — the announcement (build this first).** Both directions already contain a moment
+where you speak privately to the executive before the patient is connected. Make the two
+sentences different.
+
+Inbound: the executive answers, and `Dial`'s `confirmSound` fires on the B-leg before the bridge
+settles.
+
+```xml
+<Dial callerId="919000000001"
+      timeout="25"
+      confirmSound="https://api.yourclinic.app/vobiz/whisper?call={call_id}"
+      confirmTimeout="10"
+      action="/vobiz/dial-result?call={call_id}">
+  <Number>918888800001</Number>
+  <Number>918888800002</Number>
+  <Number>918888800003</Number>
+</Dial>
+```
+
+`/vobiz/whisper` returns Speak-only XML — "Incoming patient call, Ravi Sharma, second call
+today." — and then the bridge completes. Caveat as in §4.1: play the whisper, do not gate on a
+keypress.
+
+Outbound: the executive answers first, so the click-to-call `answer_url` runs before the patient
+is dialled. Say which way the call is going, by name:
+
+```xml
+<Response>
+  <Speak language="en-IN">Calling Ravi Sharma now. Please wait.</Speak>
+  <Dial callerId="919000000001" timeout="30" timeLimit="3600">
+    <Number>91XXXXXXXXXX</Number>
+  </Dial>
+</Response>
+```
+
+"Incoming patient call…" versus "Calling Ravi Sharma now…" — two different sentences, one per
+direction. It costs nothing, needs no extra infrastructure, and it is the only signal that
+survives a desk phone, a dead battery on the app, or a handset with no data connection. This is
+the requirement, so treat it as non-negotiable in the build.
+
+**Signal 2 — a second internal DID (the glanceable option).** If you want the phone's own screen
+to say it, give callbacks a distinct caller ID: a second DID used *only* on the leg to the
+executive and never published to patients. The public number stays one.
+
+```
+inbound   →  <Dial callerId="M">     →  executive's phone shows M      ("Clinic")
+outbound  →  Call API from = M_CB    →  executive's phone shows M_CB   ("Clinic Callback")
+             then <Dial callerId="M"> →  patient still sees M
+```
+
+Patients never see `M_CB`. It exists so the executive's handset can display a different number,
+and if the clinic saves both as contacts, the incoming-call screen names them correctly. The
+honest cost: the account now holds two numbers per clinic even though only one is public, so it
+is not free — but it is the most glanceable option and the only one that works without the
+executive hearing anything.
+
+**Signal 3 — `callerName`.** Set it per direction: the patient's name on the inbound `Dial`,
+and something like "Callback" in the outbound `Call` API's `caller_name` field. Whether the
+handset displays it is up to the carrier and device. Free, so set it, but never rely on it.
+
+**Signal 4 — the app.** Push a notification when the outbound leg is answered, and show a live
+state ("Outbound to Ravi Sharma — ringing patient"). This is the same screen-pop as §4.1, so it
+costs nothing extra once the app exists.
+
+**One property that already helps, and one rule that follows from it:** an outbound callback
+rings **only the executive who pressed Call** — never the group — while an inbound call rings
+every available executive. So the shape of the ring is a weak hint (one phone rings: probably
+your callback; three ring: definitely inbound). Do not rely on it, but it is the reason the
+outbound flow must never fan out to the group.
+
+Recommendation: signal 1 in the first build, signal 2 if the clinic will carry the extra
+internal DID, signal 4 when the app ships, signal 3 always.
+
 ---
 
 ## 5. Flow 1 — Patient calls the clinic
@@ -205,6 +303,8 @@ Response shape:
   <Dial callerId="919000000001"
         timeout="25"
         timeLimit="3600"
+        confirmSound="https://api.yourclinic.app/vobiz/whisper?call={call_id}"
+        confirmTimeout="10"
         action="https://api.yourclinic.app/vobiz/dial-result?call={call_id}"
         method="POST"
         callbackUrl="https://api.yourclinic.app/vobiz/dial-events?call={call_id}"
@@ -222,6 +322,8 @@ Notes:
   answer wins, the rest stop. With three executives there is no reason to build anything clever.
 - `timeout` is the ringing phase (seconds to wait for an answer). `timeLimit` is the connected
   phase (default 14400). Do not confuse them.
+- `confirmSound` is what tells the answering executive this is an inbound patient call (§4.2).
+  Without it, `mask` mode is genuinely ambiguous on the handset.
 - Use `action` to learn *which* executive answered and what the outcome was. Without it you have
   a call log with no owner.
 - Put your own `call_id` in the URL rather than the patient's number — see §8.
@@ -258,12 +360,13 @@ The executive never dials the patient's number. The app asks the backend to plac
 4. Backend calls Vobiz:
      POST {VOBIZ_API_BASE}/Account/{auth_id}/Call/
      {
-       "from": "<M>",                          // clinic DID — what the executive sees
+       "from": "<M_CB or M>",                  // caller ID the executive's phone shows
        "to": "<executive mobile>",             // Vobiz rings the executive FIRST
        "answer_url": "https://api.yourclinic.app/vobiz/bridge/{token}",
        "answer_method": "POST",
        "ring_timeout": "30",
        "time_limit": "3600",
+       "caller_name": "Callback",              // best-effort direction label (§4.2)
        "hangup_url": "https://api.yourclinic.app/vobiz/hangup",
        "hangup_method": "POST"
      }
@@ -271,7 +374,7 @@ The executive never dials the patient's number. The app asks the backend to plac
 6. Vobiz POSTs /vobiz/bridge/{token}. Backend resolves the token, checks it is unused and
    unexpired, and returns:
        <Response>
-         <Speak>Connecting you now.</Speak>
+         <Speak language="en-IN">Calling Ravi Sharma now. Please wait.</Speak>
          <Dial callerId="919000000001" timeout="30" timeLimit="3600"
                action="/vobiz/bridge-result?token=...">
            <Number>91XXXXXXXXXX</Number>       <!-- the patient -->
@@ -286,16 +389,18 @@ It also means a failed/ignored call costs nothing on the patient's side, and you
 
 Requirements this flow imposes:
 
-- **`from` must be a DID you own** — that is M. Vobiz uses it as the caller ID for the leg to
-  the executive, and you re-assert it on the `Dial` to the patient. Both ends see the clinic
-  number.
+- **`from` must be a DID you own** — M, or M_CB if you are using the second-DID signal. Vobiz
+  uses it as the caller ID for the leg to the executive, and you re-assert `callerId="M"` on the
+  `Dial` to the patient. The patient always sees M, whichever you choose.
+- **The announcement is not optional.** The `Speak` before `Dial` is what tells the executive
+  this is their outbound call and who it is to (§4.2). Do not reduce it to a generic "connecting".
 - **The token must be single-use.** Anyone who guesses the bridge URL can make your account dial
   a number. Bind it to the `CallUUID` Vobiz sends, and consume it on first use.
 - **Validate the patient against the clinic** before minting the token. Otherwise an executive at
   clinic A can dial a patient of clinic B — a cross-tenant data leak.
 - **Never dial an executive's own number as the patient.** Reject `patient == executive.mobile`.
-- **`Speak` before `Dial`** so the executive is not left in silence while the patient's phone
-  rings. Alternatively use `dialMusic` on the `Dial` for ringback.
+- **Never fan the outbound leg out to the group.** It rings the initiating executive only; that
+  is part of how direction is signalled.
 - The `Call` API returns `api_id` / `request_uuid` immediately with a `200`; that means *queued*,
   not answered. Track the real state through `answer_url` and `hangup_url`.
 
@@ -338,6 +443,8 @@ patient's likely language (or a bilingual greeting) is worth the extra config.
   Never in a URL, never in a log line, never in a third-party error tracker.
 - **Tokens, not numbers, in URLs.** Every `answer_url` / `action` / `callbackUrl` should carry an
   opaque token or your internal `call_id`. Vobiz logs these URLs; so do your proxies.
+- **Do not put patient names in a whisper URL.** The whisper text comes from your own lookup at
+  request time, not from the query string — the URL carries only `call_id`.
 - **Authenticate the webhooks.** `/vobiz/*` endpoints are reachable by anyone who learns the URL.
   Restrict to Vobiz egress IPs, or put a shared secret in the path, or verify a signature. HTTPS
   only.
@@ -358,6 +465,7 @@ patient's likely language (or a bilingual greeting) is worth the extra config.
 
 | Symptom | Cause | Fix |
 |---|---|---|
+| Executive cannot tell an inbound patient call from their own callback | both directions present the same caller ID (M) in `mask` mode | directional announcement per §4.2; optionally a second internal DID for callbacks |
 | Patient connects but the executive sees a real number in `mask` mode | `callerId` missing or wrong | assert `callerId == clinic.did_e164` before emitting XML |
 | Hangup `3030` `Unknown Caller ID` | `callerId` set to something you do not own — commonly the patient's number in `reveal` mode | in `reveal` mode **omit** the attribute; never set it to a third party's number |
 | Hangup `7011` | Answer URL unreachable or non-2xx | HTTPS reachability, IP allow-list, certificate |
@@ -365,6 +473,7 @@ patient's likely language (or a bilingual greeting) is worth the extra config.
 | Nothing rings, Vobiz never calls your webhook | DID not attached to the application, or app disabled | re-check attach, `public_uri`, use the console's Test URL |
 | Every call goes to voicemail | no executive marked `available`, or availability never resets | flip status back on the hangup webhook, not on a timer alone |
 | Executive rings forever after a call ends | `busy` flag set on answer and never cleared | clear on `hangup_url` and on `Dial` action, both |
+| Whisper never plays | `confirmSound` URL unreachable, or returns XML with elements other than `Play`/`Speak`/`Gather` | verify the endpoint; strip everything else from the response |
 | Click-to-call dials the wrong patient | token reused or not bound to `CallUUID` | single-use tokens, consume on first use, short TTL |
 | Two patients get bridged together | token collision or a mapping keyed on the wrong field | key tokens on a random id; never on the patient number |
 | Bridge drops mid-call | `timeLimit` too short, or slow webhook | raise `timeLimit`; keep the handler sub-second |
@@ -381,8 +490,11 @@ its appeal, but it collides with inbound routing — every inbound call has to b
 chose click-to-call, which is cleaner. Keep this in the back pocket for executives who are
 travelling or whose app is broken.
 
-**Also out of scope for now:** per-executive DIDs (you chose one shared DID), call transfer
-between executives, and WhatsApp/SMS notifications to the callback queue.
+Worth noting it would also solve direction signalling for free — an executive dialling in knows
+they initiated — which is the one argument in its favour.
+
+**Also out of scope for now:** per-executive DIDs (you chose one shared public DID), call
+transfer between executives, and WhatsApp/SMS notifications to the callback queue.
 
 ---
 
@@ -391,9 +503,13 @@ between executives, and WhatsApp/SMS notifications to the callback queue.
 Offline, POSTing to your own handlers:
 
 ```
-# inbound, DID known, executives available -> expect Dial with 3 Numbers, callerId = M
+# inbound, DID known, executives available -> expect Dial with 3 Numbers, callerId = M,
+# and a confirmSound attribute pointing at the whisper endpoint
 curl -s -X POST localhost:8080/vobiz/inbound \
   -d "From=919812345678" -d "To=919000000001" -d "CallUUID=test-1"
+
+# whisper endpoint -> expect Speak-only XML, mentioning inbound and the patient
+curl -s -X POST "localhost:8080/vobiz/whisper?call=123"
 
 # inbound, unknown DID -> expect Speak + Hangup, no Dial
 curl -s -X POST localhost:8080/vobiz/inbound -d "From=919812345678" -d "To=919999999999"
@@ -404,7 +520,7 @@ curl -s -X POST localhost:8080/vobiz/inbound -d "From=919812345678" -d "To=91900
 # reveal-mode clinic -> expect a Dial with NO callerId attribute
 curl -s -X POST localhost:8080/vobiz/inbound -d "From=919812345678" -d "To=919000000002"
 
-# bridge endpoint, valid token -> expect Dial callerId=M to the patient
+# bridge endpoint, valid token -> expect Speak announcing the patient, then Dial callerId=M
 curl -s -X POST localhost:8080/vobiz/bridge/<token> -d "CallUUID=test-2" -d "To=918888800001"
 
 # bridge endpoint, token reused -> expect rejection, no Dial
@@ -417,15 +533,20 @@ curl -s -X POST localhost:8080/vobiz/bridge/<token> -d "CallUUID=test-3"
 Live, in order:
 
 1. Patient dials M → all three executive phones ring → first to answer is bridged.
-2. Same call, in `mask` mode → executive's screen shows M, whisper plays the patient's name.
-3. Same call, in `reveal` mode → executive's screen shows the patient's real number.
-4. Executive presses Call in the app → their phone rings, they answer, patient's phone rings
-   showing M → bridged → hang up → `calls` row complete with duration and owner.
-5. No executive available → greeting + 30s recording → row appears in `callback_queue` → play it
+2. **Direction check, inbound:** in `mask` mode the executive answers and hears "Incoming patient
+   call…" before the patient is connected.
+3. **Direction check, outbound:** the executive presses Call, answers their own phone, and hears
+   "Calling Ravi Sharma now…" — unmistakably different from step 2.
+4. Same inbound call, in `reveal` mode → executive's screen shows the patient's real number.
+5. Same call with the second-DID signal enabled → the callback rings showing M_CB, the inbound
+   rings showing M, and the patient sees M in both cases.
+6. Executive presses Call → patient's phone rings showing M → bridged → hang up → `calls` row
+   complete with duration and owner.
+7. No executive available → greeting + 30s recording → row appears in `callback_queue` → play it
    back → press Call → bridged.
-6. Executive mid-call, second patient calls → availability logic skips them (or call-waiting
+8. Executive mid-call, second patient calls → availability logic skips them (or call-waiting
    catches it, if you skipped availability).
-7. Pull the app's Answer URL in the console → confirm the fallback serves valid XML.
+9. Pull the app's Answer URL in the console → confirm the fallback serves valid XML.
 
 ---
 
@@ -435,24 +556,29 @@ Live, in order:
 - [ ] `To = M` resolves to exactly one clinic; unknown DIDs are rejected, not defaulted
 - [ ] Executive count per clinic enforced at 3 in the API, not just the UI
 - [ ] `caller_id_mode` honoured — `mask` sets `callerId=M`, `reveal` omits the attribute
+- [ ] **The executive can tell direction from the call itself**: a distinct inbound whisper and a
+      distinct outbound announcement (§4.2), verified by ear on a real handset in both modes
 - [ ] Simultaneous `<Dial>` rings all available executives; `action` records who answered
+- [ ] Click-to-call rings only the initiating executive, never the group
 - [ ] Click-to-call uses single-use, short-TTL tokens bound to `CallUUID`, with no PII in the URL
 - [ ] Patient is authorised against the executive's clinic before any outbound dial
 - [ ] Availability flips to busy on answer and back on hangup, from both webhooks
 - [ ] Voicemail writes to `callback_queue` and the recording is playable in the app
 - [ ] Webhooks authenticated, HTTPS only, patient numbers encrypted at rest
 - [ ] Retention window defined and enforced for audio and metadata
-- [ ] All offline cases and all seven live cases pass
+- [ ] All offline cases and all nine live cases pass
 
 ---
 
 ## 13. Open decisions
 
 1. **Default `caller_id_mode` for new clinics** — recommend `mask`.
-2. **Recording** — on for all calls, voicemail only, or off? Consent wording needed if on.
-3. **Greeting language** — English, Hindi, or bilingual?
-4. **Ring timeout** — 25s default; longer means fewer missed patients but slower voicemail.
-5. **Availability** — do executives self-mark, or is busy inferred purely from live calls?
+2. **Direction signalling** — is one spoken announcement per direction enough, or will the clinic
+   pay for a second internal DID so a callback visibly rings from a different number? (§4.2)
+3. **Recording** — on for all calls, voicemail only, or off? Consent wording needed if on.
+4. **Greeting language** — English, Hindi, or bilingual?
+5. **Ring timeout** — 25s default; longer means fewer missed patients but slower voicemail.
+6. **Availability** — do executives self-mark, or is busy inferred purely from live calls?
 
 ---
 
