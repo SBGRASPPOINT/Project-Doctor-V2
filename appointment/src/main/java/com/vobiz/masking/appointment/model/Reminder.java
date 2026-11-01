@@ -35,6 +35,11 @@ import java.util.Map;
 @NoArgsConstructor
 public class Reminder implements Jsonable {
 
+    /** The appointment this reminder belongs to — read-only view onto appointment_id. */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "appointment_id", insertable = false, updatable = false)
+    private Appointment appointment;
+
     public static final String KIND_T24H = "t24h";
     public static final String KIND_T2H = "t2h";
     public static final String KIND_CHANGE = "change";

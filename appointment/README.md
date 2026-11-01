@@ -218,35 +218,44 @@ caller ──dials M1──▶ /voice/answer ──▶ <Gather> main menu   pres
 
 `call_uuid` joins your log to Vobiz's CDR API (`GET /api/v1/Account/{auth_id}/cdr`) for billing/disputes.
 
-### Table relations
+### Table relations (real JPA associations)
 
-Relations are **plain `Long` id columns, not JPA `@ManyToOne`** — a deliberate choice: Hibernate then
-creates the tables without DB-level foreign keys, nothing lazy-loads across the webhook path, and
-every join is explicit SQL in the DAOs (`AppointmentDao`: `LEFT JOIN doctors/departments`;
-`CallDao`/`CallbackDao`: `LEFT JOIN agents`). Referential integrity is enforced in the service layer
-(`findById` → 404 before any write) plus `UNIQUE` constraints where sharing must be impossible.
+Every relation below is modeled with actual JPA annotations in the entities — `@ManyToOne`,
+`@OneToMany(mappedBy=…)` and one `@ManyToMany` — mapped **read-only** (`insertable=false,
+updatable=false`) onto the existing `*_id` columns, so Hibernate also generates the foreign keys and
+the `doctor_departments` join table on boot, while all existing write paths (plain `Long` setters)
+keep working unchanged. All associations are `FetchType.LAZY` and are never touched by the web layer
+(JSON goes through `toMap()`), so they cost nothing on the webhook path. List joins for the console
+stay explicit SQL in the DAOs (`AppointmentDao`: `LEFT JOIN doctors/departments`; `CallDao`/
+`CallbackDao`: `LEFT JOIN agents`). Service-layer checks (`findById` → 404 before any write) plus
+`UNIQUE` constraints guard integrity.
 
 ```
-agents 1───< calls.agent_id                         who was rung on the call
-agents 1───< callback_requests.assigned_agent_id   who took the callback
-agents 1───< doctors.agent_id                       optional: doctor ↔ masked agent handset
-departments 1───< doctors.department_id
-departments 1───< appointments.department_id       denormalized copy for display/joins
-doctors 1───< doctor_schedules.doctor_id           UNIQUE(doctor_id, day_of_week, start_time)
-doctors 1───< doctor_time_off.doctor_id
-doctors 1───< appointments.doctor_id               idx(doctor_id, starts_at); slot_key UNIQUE
-patients 1───< appointments.patient_id              idx(patient_id, starts_at)
-calls 1───< appointments.created_via_call_id        which phone call booked it
-appointments 1───< appointment_events.appointment_id   audit trail (create/reschedule/cancel/…)
-appointments 1───< reminders.appointment_id        UNIQUE(appointment_id, kind) — max one t24h + one t2h + one change
-reminders 1───< calls.reminder_id                  the outbound reminder leg appears in the call log
-reminders.outbound_call_uuid ──▶ calls.call_uuid   same UUID stored on both sides; /voice/hangup resolves the reminder through it
-calls.call_uuid ◀──▶ ivr_sessions.call_uuid        IVR state per call (deleted after 24h by ReminderScheduler)
-ivr_sessions.patient_id / appointment_id / reminder_id ──▶ patients / appointments / reminders
-calls 1───< callback_requests.call_id
-patients 1───< waitlist_entries.patient_id  (+ optional doctor_id / department_id)
-patients.phone_e164 (UNIQUE) = inbound caller-ID "From"  ← how known callers are matched on /voice/answer
+@ManyToOne / @OneToMany pairs (the mappedBy field on the child side is named):
+agents 1───< calls.agent_id                         CallRecord.agent             who was rung
+agents 1───< callback_requests.assigned_agent_id   CallbackRequest.assignedAgent
+agents 1───< doctors.agent_id                       Doctor.agent                 masked handset link
+departments 1───< doctors.department_id             Doctor.department            primary department
+doctors M───N departments                           Doctor.departments ↔ Department.roster
+                                                    via join table doctor_departments (@ManyToMany)
+departments 1───< appointments.department_id        Appointment.department       display copy
+doctors 1───< doctor_schedules.doctor_id           DoctorSchedule.doctor        UNIQUE(doctor_id, day_of_week, start_time)
+doctors 1───< doctor_time_off.doctor_id            DoctorTimeOff.doctor
+doctors 1───< appointments.doctor_id               Appointment.doctor           idx(doctor_id, starts_at); slot_key UNIQUE
+patients 1───< appointments.patient_id             Appointment.patient          idx(patient_id, starts_at)
+patients 1───< waitlist_entries.patient_id         WaitlistEntry.patient
+calls 1───< appointments.created_via_call_id       Appointment.createdViaCall   which call booked it
+calls 1───< callback_requests.call_id              CallbackRequest.call
+appointments 1───< appointment_events.appointment_id   AppointmentEvent.appointment   audit trail
+appointments 1───< reminders.appointment_id        Reminder.appointment         UNIQUE(appointment_id, kind)
+reminders 1───< calls.reminder_id                  CallRecord.reminder          outbound reminder leg in the call log
+ivr_sessions ──▶ patients/appointments/reminders   IvrSession.patient/.appointment/.reminder
+patients.phone_e164 (UNIQUE) = inbound caller-ID "From"  ← caller-ID match on /voice/answer
 ```
+
+Runtime links that are not FK columns: `reminders.outbound_call_uuid` ↔ `calls.call_uuid`
+(same UUID stored on both sides — `/voice/hangup` resolves the reminder through it), and
+`calls.call_uuid` ↔ `ivr_sessions.call_uuid` (IVR state per call, purged after 24 h).
 
 The "shared entry" rules that matter operationally:
 

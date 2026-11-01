@@ -30,6 +30,11 @@ import java.util.Map;
 @NoArgsConstructor
 public class DoctorSchedule implements Jsonable {
 
+    /** Owning many-to-one side of the weekly template — read-only view onto doctor_id. */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "doctor_id", insertable = false, updatable = false)
+    private Doctor doctor;
+
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;

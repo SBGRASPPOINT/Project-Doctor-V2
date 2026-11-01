@@ -24,6 +24,20 @@ import java.util.Map;
 @NoArgsConstructor
 public class WaitlistEntry implements Jsonable {
 
+    // ---- JPA relations (LAZY, read-only onto the id columns) ----
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "patient_id", insertable = false, updatable = false)
+    private Patient patient;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "doctor_id", insertable = false, updatable = false)
+    private Doctor doctor;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "department_id", insertable = false, updatable = false)
+    private Department department;
+
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
