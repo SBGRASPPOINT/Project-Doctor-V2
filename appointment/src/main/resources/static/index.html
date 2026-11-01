@@ -3,14 +3,19 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Vobiz Call Masking — Ops Console</title>
+    <title>Appointment Service — Ops Console (Vobiz masking)</title>
     <link rel="stylesheet" href="styles.css">
 </head>
 <body>
 <header>
-    <h1>📞 Vobiz Call Masking <span class="subtitle">ops console</span></h1>
+    <h1>📞 Appointment Service <span class="subtitle">call-first booking on Vobiz masking — ops console</span></h1>
     <nav id="tabs">
         <button data-tab="dashboard" class="tab active">Dashboard</button>
+        <button data-tab="appointments" class="tab">Appointments</button>
+        <button data-tab="doctors" class="tab">Doctors</button>
+        <button data-tab="patients" class="tab">Patients</button>
+        <button data-tab="reminders" class="tab">Reminders</button>
+        <button data-tab="templates" class="tab">Prompts</button>
         <button data-tab="agents" class="tab">Agents</button>
         <button data-tab="calls" class="tab">Call log</button>
         <button data-tab="callbacks" class="tab">Callbacks <span id="pending-badge" class="badge hidden">0</span></button>
@@ -22,10 +27,132 @@
 <main>
     <section id="tab-dashboard" class="panel">
         <div class="cards" id="stat-cards"></div>
+        <h2>Appointment stats</h2>
+        <div class="cards" id="apt-cards"></div>
         <h2>Live calls</h2>
         <div id="live-calls"></div>
         <h2>Recent calls</h2>
         <div id="recent-calls"></div>
+    </section>
+
+    <section id="tab-appointments" class="panel hidden">
+        <h2>Book appointment (staff)</h2>
+        <form id="add-appointment" class="inline-form">
+            <input name="patient_phone_e164" placeholder="patient phone +919876543210" required maxlength="32" style="width:220px">
+            <select name="doctor_id" id="apt-doctor-select" required></select>
+            <input name="starts_at" type="datetime-local" required>
+            <select name="source">
+                <option value="agent">agent</option>
+                <option value="walk_in">walk_in</option>
+                <option value="web">web</option>
+            </select>
+            <input name="reason" placeholder="reason (optional)" maxlength="255">
+            <button type="submit">Book</button>
+        </form>
+        <h2>Availability</h2>
+        <form id="availability-form" class="inline-form">
+            <select name="doctor_id" id="avail-doctor-select" required></select>
+            <input name="date" type="date">
+            <button type="submit">Show free slots</button>
+        </form>
+        <div id="availability-list"></div>
+        <h2>Appointments</h2>
+        <form id="apt-filters" class="inline-form">
+            <select name="status">
+                <option value="">all statuses</option>
+                <option>booked</option><option>confirmed</option><option>rescheduled</option>
+                <option>completed</option><option>cancelled</option><option>no_show</option>
+            </select>
+            <select name="doctor_id" id="apt-filter-doctor"><option value="">all doctors</option></select>
+            <input name="from" type="date" title="from date">
+            <input name="to" type="date" title="to date">
+            <input name="q" placeholder="search ref / name / phone…">
+            <button type="submit">Filter</button>
+        </form>
+        <div id="appointments-table"></div>
+    </section>
+
+    <section id="tab-doctors" class="panel hidden">
+        <h2>Departments</h2>
+        <form id="add-department" class="inline-form">
+            <input name="name" placeholder="Department name" required maxlength="120">
+            <button type="submit">Add department</button>
+        </form>
+        <div id="departments-list"></div>
+        <h2>Doctors</h2>
+        <form id="add-doctor" class="inline-form">
+            <input name="name" placeholder="Dr. Name" required maxlength="120">
+            <input name="specialization" placeholder="specialization" maxlength="120">
+            <select name="department_id" id="doctor-dept-select"></select>
+            <input name="slot_minutes" type="number" value="15" min="5" max="240" title="slot length (min)" style="width:90px">
+            <select name="agent_id" id="doctor-agent-select"><option value="">no linked agent</option></select>
+            <button type="submit">Add doctor</button>
+        </form>
+        <div id="doctors-table"></div>
+        <h2>Weekly schedules</h2>
+        <form id="add-schedule" class="inline-form">
+            <select name="doctor_id" id="sched-doctor-select" required></select>
+            <select name="day_of_week">
+                <option value="1">Mon</option><option value="2">Tue</option><option value="3">Wed</option>
+                <option value="4">Thu</option><option value="5">Fri</option><option value="6">Sat</option>
+                <option value="0">Sun</option>
+            </select>
+            <input name="start_time" type="time" value="10:00" required>
+            <input name="end_time" type="time" value="13:00" required>
+            <input name="slot_minutes" type="number" value="15" min="5" max="240" style="width:90px" title="0 = use doctor default">
+            <button type="submit">Add schedule</button>
+        </form>
+        <div id="schedules-table"></div>
+        <h2>Time off</h2>
+        <form id="add-timeoff" class="inline-form">
+            <select name="doctor_id" id="timeoff-doctor-select" required></select>
+            <input name="from_ts" type="datetime-local" required>
+            <input name="to_ts" type="datetime-local" required>
+            <input name="reason" placeholder="reason (optional)" maxlength="255">
+            <button type="submit">Block time off</button>
+        </form>
+        <div id="timeoff-table"></div>
+    </section>
+
+    <section id="tab-patients" class="panel hidden">
+        <h2>Patients <small>(real numbers stay here — never dialled by hand; outbound calls always go out via masked M1)</small></h2>
+        <form id="add-patient" class="inline-form">
+            <input name="name" placeholder="Full name" required maxlength="120">
+            <input name="phone_e164" placeholder="+919876543210" required maxlength="32">
+            <select name="preferred_language">
+                <option value="en">en</option><option value="hi">hi</option><option value="bn">bn</option>
+            </select>
+            <button type="submit">Add patient</button>
+        </form>
+        <form id="patient-search" class="inline-form">
+            <input name="q" placeholder="search name / phone…">
+            <button type="submit">Search</button>
+        </form>
+        <div id="patients-table"></div>
+    </section>
+
+    <section id="tab-reminders" class="panel hidden">
+        <h2>Reminders <small>(voice calls placed from masked M1)</small></h2>
+        <form id="reminder-filters" class="inline-form">
+            <select name="status">
+                <option value="">all statuses</option>
+                <option>pending</option><option>placed</option><option>answered_confirmed</option>
+                <option>answered_rescheduled</option><option>answered_cancelled</option>
+                <option>no_answer</option><option>failed</option><option>suppressed</option>
+            </select>
+            <select name="kind">
+                <option value="">all kinds</option>
+                <option>t24h</option><option>t2h</option><option>change</option>
+            </select>
+            <button type="submit">Filter</button>
+            <button type="button" id="run-reminders">▶ Run due now</button>
+        </form>
+        <div id="reminders-table"></div>
+    </section>
+
+    <section id="tab-templates" class="panel hidden">
+        <h2>IVR &amp; reminder prompts <small>(editable — {placeholders} are substituted at call time)</small></h2>
+        <div id="templates-table"></div>
     </section>
 
     <section id="tab-agents" class="panel hidden">

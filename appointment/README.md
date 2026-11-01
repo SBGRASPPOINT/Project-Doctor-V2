@@ -132,8 +132,11 @@ Voice webhooks (called by Vobiz, form-encoded, return `text/xml`):
 | `POST /voice/dial-result` | Outcome of the simultaneous Dial (answered / no_answer) |
 | `POST /voice/dial-step?call_uuid&step` | Sequential chaining: returns next Dial or voicemail XML |
 | `POST /voice/recording-done` | Record callback → creates callback request |
-| `POST /voice/hangup` | Final duration/cause; closes outbound callback legs |
+| `POST /voice/hangup` | Final duration/cause; closes outbound callback legs + reminder legs |
 | `GET /voice/outbound-answer?to&callback_id` | Agent answered the outbound leg → bridge to customer |
+| `POST /voice/ivr/{menu,department,doctor,slot,confirm,reschedule,cancel,no-input,human}` | Keypad IVR steps for booking (gather actions; press **0** anywhere → masked bridge) |
+| `GET /voice/reminder-answer?reminder_id&appointment_id&call_uuid` | Outbound reminder call answered → reminder prompt + keypad gather |
+| `POST /voice/reminder-response?reminder_id&call_uuid` | Reminder keypad: **1** confirm, **2** reschedule (→ reception), **3** cancel |
 
 Internal REST API (used by the ops console, JSON):
 
@@ -147,6 +150,35 @@ Internal REST API (used by the ops console, JSON):
 | `PATCH /api/callbacks/{id}` | status / notes / assigned agent |
 | `POST /api/callbacks/{id}/call` `{agent_id?}` | click-to-call (outbound via Vobiz, `callerId=M1`) |
 | `GET/PUT /api/settings` | M1, ring timeout, voicemail length, routing mode, texts… |
+
+## Call-first appointments (IVR on M1)
+
+With `ivr_enabled=true` (default), `POST /voice/answer` opens a keypad IVR instead of dialling
+agents right away:
+
+```
+caller ──dials M1──▶ /voice/answer ──▶ <Gather> main menu   press 1 book · 2 reschedule · 3 cancel · 0 reception
+                        │ book: 1 → department → 2 → doctor → 3 → slot → 4 → confirm (1 = book) ──▶ booked, ref APT-XXXX
+                        │ reschedule: 2 → pick appointment → new slot → confirm ──▶ rescheduled (same ref)
+                        │ cancel: 3 → pick appointment → confirm 1 ──▶ cancelled (slot freed)
+                        │ 0 / new caller / stuck twice ──▶ classic masked bridge <Dial callerId="M1"> + voicemail fallback
+```
+
+- **Known callers** (caller-ID matches `patients.phone_e164`) are greeted by name; unknown callers are
+  registered on the fly (`registerUnknownCaller`) so they can still book.
+- **Double-booking is impossible**: `appointments.slot_key = "{doctor_id}|{starts_at}"` has a UNIQUE
+  constraint; cancelling clears the key so the slot becomes bookable again.
+- **Reference codes** are `APT-` + 4 chars from an unambiguous alphabet (no 0/O, 1/I/L).
+- **Masking is preserved end-to-end**: the IVR never dials the patient's real number; reminders and
+  callbacks go out with `callerId=M1`. Staff see real numbers only in this internal console.
+- **Reminder calls** are placed by `ReminderScheduler` (scan every `reminder_scan_ms`) as outbound
+  Vobiz calls to the patient with `callerId=M1`; the answer webhook plays the reminder and gathers
+  1/2/3. Quiet hours (`reminder_quiet_start/end`, clinic tz) roll reminder times into the allowed
+  window; DND patients are suppressed; no-answer retries up to `reminder_retry_count`.
+- **Staff-side changes notify the patient**: reschedule/cancel by staff, or a doctor time-off block
+  overlapping existing appointments (`needs_rebooking=true`), enqueue a `change` reminder call.
+- `appointment.source` ∈ `ivr_call / agent / reminder_ivr / walk_in / web`.
+- Set `ivr_enabled=false` → `/voice/answer` returns exactly the classic masking XML.
 
 ## Routing modes
 
