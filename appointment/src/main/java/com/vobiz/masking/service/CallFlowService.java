@@ -45,7 +45,7 @@ public class CallFlowService {
         this.defaultM1 = defaultM1;
     }
 
-    /** POST /voice/answer — a caller dialled M1. Log the call, pick agents, return XML. */
+    /** POST /voice/answer — a caller dialled M1. Log the call, then return the routing XML. */
     public HttpResult voiceAnswer(Map<String, String> p) {
         String callUuid = Forms.firstNonBlank(p, "CallUUID", "call_uuid");
         if (callUuid == null) return HttpResult.xml(400, VobizXml.emptyResponse());
@@ -53,7 +53,16 @@ public class CallFlowService {
         String to = p.getOrDefault("To", "");
         callDao.insertInbound(callUuid, from, to);
         log.info("Inbound call {} from {} to {}", callUuid, mask(from), to);
+        return HttpResult.xml(200, bridgeToAgentsXml(callUuid));
+    }
 
+    /**
+     * The reusable "human path": optional recording announcement + <Dial> to the eligible
+     * agents (simultaneous, or the first one in sequential mode) + voicemail fallback in the
+     * same document. Extracted so the appointment IVR can fall through to reception (or a
+     * specific doctor) without duplicating the XML.
+     */
+    public String bridgeToAgentsXml(String callUuid) {
         String m1 = settings.m1(defaultM1);
         int ringTimeout = settings.ringTimeoutSec();
         List<Agent> agents = routing.eligibleAgents();
@@ -80,7 +89,7 @@ public class CallFlowService {
             inner.append(VobizXml.dial(phones, m1, ringTimeout, publicBaseUrl + "/voice/dial-result", false));
             inner.append(fallback);
         }
-        return HttpResult.xml(200, VobizXml.response(inner.toString()));
+        return VobizXml.response(inner.toString());
     }
 
     /** POST /voice/dial-result — action callback of the simultaneous Dial (logging only). */
