@@ -217,3 +217,42 @@ caller ──dials M1──▶ /voice/answer ──▶ <Gather> main menu   pres
 - `settings(key PK, value)`
 
 `call_uuid` joins your log to Vobiz's CDR API (`GET /api/v1/Account/{auth_id}/cdr`) for billing/disputes.
+
+### Table relations
+
+Relations are **plain `Long` id columns, not JPA `@ManyToOne`** — a deliberate choice: Hibernate then
+creates the tables without DB-level foreign keys, nothing lazy-loads across the webhook path, and
+every join is explicit SQL in the DAOs (`AppointmentDao`: `LEFT JOIN doctors/departments`;
+`CallDao`/`CallbackDao`: `LEFT JOIN agents`). Referential integrity is enforced in the service layer
+(`findById` → 404 before any write) plus `UNIQUE` constraints where sharing must be impossible.
+
+```
+agents 1───< calls.agent_id                         who was rung on the call
+agents 1───< callback_requests.assigned_agent_id   who took the callback
+agents 1───< doctors.agent_id                       optional: doctor ↔ masked agent handset
+departments 1───< doctors.department_id
+departments 1───< appointments.department_id       denormalized copy for display/joins
+doctors 1───< doctor_schedules.doctor_id           UNIQUE(doctor_id, day_of_week, start_time)
+doctors 1───< doctor_time_off.doctor_id
+doctors 1───< appointments.doctor_id               idx(doctor_id, starts_at); slot_key UNIQUE
+patients 1───< appointments.patient_id              idx(patient_id, starts_at)
+calls 1───< appointments.created_via_call_id        which phone call booked it
+appointments 1───< appointment_events.appointment_id   audit trail (create/reschedule/cancel/…)
+appointments 1───< reminders.appointment_id        UNIQUE(appointment_id, kind) — max one t24h + one t2h + one change
+reminders 1───< calls.reminder_id                  the outbound reminder leg appears in the call log
+reminders.outbound_call_uuid ──▶ calls.call_uuid   same UUID stored on both sides; /voice/hangup resolves the reminder through it
+calls.call_uuid ◀──▶ ivr_sessions.call_uuid        IVR state per call (deleted after 24h by ReminderScheduler)
+ivr_sessions.patient_id / appointment_id / reminder_id ──▶ patients / appointments / reminders
+calls 1───< callback_requests.call_id
+patients 1───< waitlist_entries.patient_id  (+ optional doctor_id / department_id)
+patients.phone_e164 (UNIQUE) = inbound caller-ID "From"  ← how known callers are matched on /voice/answer
+```
+
+The "shared entry" rules that matter operationally:
+
+- **One slot = one appointment**: `appointments.slot_key = "{doctor_id}|{starts_at}"` is UNIQUE;
+  cancelling sets it to NULL, which frees the slot for someone else.
+- **One appointment = at most one reminder per kind** (`t24h`, `t2h`, `change`), so re-scheduling
+  replaces the row instead of duplicating it (`replaceFor`).
+- **One call_uuid = one IVR session = at most one call-log row**; reminder legs are separate outbound
+  `calls` rows pointing back via `reminder_id` / `outbound_call_uuid`.
