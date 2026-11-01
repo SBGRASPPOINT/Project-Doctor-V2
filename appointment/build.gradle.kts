@@ -50,5 +50,5 @@ tasks.withType<Test> {
 }
 
 tasks.bootJar {
-    archiveFileName.set("vobiz-call-masking.jar")
+    archiveFileName.set("appointment-service.jar")
 }
