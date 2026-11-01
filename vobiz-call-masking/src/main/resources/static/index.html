@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vobiz Call Masking — Ops Console</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header>
+    <h1>📞 Vobiz Call Masking <span class="subtitle">ops console</span></h1>
+    <nav id="tabs">
+        <button data-tab="dashboard" class="tab active">Dashboard</button>
+        <button data-tab="agents" class="tab">Agents</button>
+        <button data-tab="calls" class="tab">Call log</button>
+        <button data-tab="callbacks" class="tab">Callbacks <span id="pending-badge" class="badge hidden">0</span></button>
+        <button data-tab="settings" class="tab">Settings</button>
+    </nav>
+    <span id="conn" class="conn">connecting…</span>
+</header>
+
+<main>
+    <section id="tab-dashboard" class="panel">
+        <div class="cards" id="stat-cards"></div>
+        <h2>Live calls</h2>
+        <div id="live-calls"></div>
+        <h2>Recent calls</h2>
+        <div id="recent-calls"></div>
+    </section>
+
+    <section id="tab-agents" class="panel hidden">
+        <h2>Agents (real numbers — never shown to callers)</h2>
+        <form id="add-agent" class="inline-form">
+            <input name="name" placeholder="Name (e.g. Agent N2)" required maxlength="120">
+            <input name="phone_e164" placeholder="+919876543210" required maxlength="32">
+            <input name="priority" type="number" value="0" min="0" max="999" title="priority (lower rings first in sequential mode)" style="width:90px">
+            <button type="submit">Add agent</button>
+        </form>
+        <div id="agents-table"></div>
+    </section>
+
+    <section id="tab-calls" class="panel hidden">
+        <h2>Call log</h2>
+        <form id="call-filters" class="inline-form">
+            <select name="status">
+                <option value="">all statuses</option>
+                <option>in_progress</option><option>answered</option><option>no_answer</option>
+                <option>voicemail</option><option>failed</option>
+            </select>
+            <input name="from" type="date" title="from date">
+            <input name="to" type="date" title="to date">
+            <input name="q" placeholder="search number…">
+            <button type="submit">Filter</button>
+        </form>
+        <div id="calls-table"></div>
+    </section>
+
+    <section id="tab-callbacks" class="panel hidden">
+        <h2>Callback queue <small>(voicemails — use “Call back”, never dial the number by hand)</small></h2>
+        <form id="callback-filters" class="inline-form">
+            <select name="status">
+                <option value="">all</option>
+                <option>pending</option><option>calling</option><option>called_back</option><option>closed</option>
+            </select>
+            <button type="submit">Filter</button>
+        </form>
+        <div id="callbacks-list"></div>
+    </section>
+
+    <section id="tab-settings" class="panel hidden">
+        <h2>Settings</h2>
+        <form id="settings-form" class="settings-form"></form>
+    </section>
+</main>
+
+<div id="toast" class="toast hidden"></div>
+<script src="app.js"></script>
+</body>
+</html>

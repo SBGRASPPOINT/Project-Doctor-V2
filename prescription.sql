@@ -1,4 +1,13 @@
 -- This script sets up the database schema for the prescription management application.
+--
+-- Indexing note: every column that is likely to be searched, filtered or joined on
+-- (names, medication names, foreign keys, status, dates, stock levels) has a secondary
+-- index below, so lookups stay fast as the tables grow.
+--   * B-tree KEY indexes cover exact-match, prefix (LIKE 'abc%') and ORDER BY lookups.
+--   * For substring search (LIKE '%abc%') on large tables, add FULLTEXT indexes instead
+--     (InnoDB/MyISAM support them): e.g. FULLTEXT KEY ft_patients_name (name).
+--   * FK columns are indexed explicitly even though InnoDB auto-indexes them, so the
+--     indexes exist regardless of engine/constraint behaviour.
 
 -- Drop tables if they exist to ensure a clean setup.
 DROP TABLE IF EXISTS PatientMedicines;
@@ -14,22 +23,26 @@ CREATE TABLE Patients (
     name VARCHAR(255) NOT NULL,
     age INT,
     gender ENUM('Male', 'Female'),
-    weight DECIMAL(5, 2) -- Weight in kg, allows for decimal values
+    weight DECIMAL(5, 2), -- Weight in kg, allows for decimal values
+    KEY idx_patients_name (name) -- fast search: patients by name (e.g. /api/patients/search)
 );
 
 -- Table to store doctor information.
 CREATE TABLE Doctors (
     doctor_id INT PRIMARY KEY AUTO_INCREMENT,
     name VARCHAR(255) NOT NULL,
-    specialization VARCHAR(255)
+    specialization VARCHAR(255),
+    KEY idx_doctors_name (name), -- search doctors by name
+    KEY idx_doctors_specialization (specialization) -- filter doctors by specialization
 );
 
 -- Table for the chemist's inventory.
 CREATE TABLE Inventory (
     item_id INT PRIMARY KEY AUTO_INCREMENT,
-    item_name VARCHAR(255) NOT NULL UNIQUE, -- Each medicine name should be unique
+    item_name VARCHAR(255) NOT NULL UNIQUE, -- Each medicine name should be unique (UNIQUE already creates an index)
     quantity INT NOT NULL DEFAULT 0,
-    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    KEY idx_inventory_quantity (quantity) -- fast low-stock / "which products are needed" queries
 );
 
 -- Table for prescriptions issued by a doctor.
@@ -43,6 +56,10 @@ CREATE TABLE Prescriptions (
     timing VARCHAR(100),
     date_prescribed TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     status ENUM('prescribed', 'ready', 'collected') NOT NULL DEFAULT 'prescribed', -- Tracks the state of the prescription
+    KEY idx_prescriptions_patient (patient_id), -- "all prescriptions of patient X" (chemist view by patient id)
+    KEY idx_prescriptions_doctor (doctor_id), -- "all prescriptions written by doctor X" (doctor view)
+    KEY idx_prescriptions_medication (medication_name), -- search prescriptions by medication name
+    KEY idx_prescriptions_status_date (status, date_prescribed), -- filter by status, recent first (ready/collected queues)
     FOREIGN KEY (patient_id) REFERENCES Patients(patient_id),
     FOREIGN KEY (doctor_id) REFERENCES Doctors(doctor_id)
 );
@@ -54,6 +71,8 @@ CREATE TABLE PatientMedicines (
     medicine_type VARCHAR(255) NOT NULL,
     dose VARCHAR(100),
     medication_time TIME, -- Stores the time for medication reminders
+    KEY idx_patient_medicines_patient (patient_id), -- "all medicines of patient X"
+    KEY idx_patient_medicines_type (medicine_type), -- search a patient's medicines by type
     FOREIGN KEY (patient_id) REFERENCES Patients(patient_id)
 );
 
@@ -73,4 +92,3 @@ VALUES ('patient_123', 1, 'Lisinopril', '10mg', 'Once a day', 'prescribed');
 -- Insert sample inventory items
 INSERT INTO Inventory (item_name, quantity) VALUES ('Lisinopril', 500);
 INSERT INTO Inventory (item_name, quantity) VALUES ('Metformin', 300);
-
