@@ -2,8 +2,9 @@
 
 Status: design spec
 Date: 2 November 2026
-Supersedes: the two-DID model in `Vobiz-Two-Way-Masking-Spec.md` for this use case. That document
-stays valid as the generic pattern; this one is the clinic shape.
+Supersedes: an earlier two-DID masking draft, now removed from this repo. The two-DID pattern
+is still the right approach when two specific people must reach each other in both directions;
+this document is the clinic shape: one public number, up to three executives, patients outside.
 
 ---
 
