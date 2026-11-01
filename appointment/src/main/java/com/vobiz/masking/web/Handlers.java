@@ -141,7 +141,7 @@ public class Handlers {
     public HttpResult health() {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("status", "ok");
-        m.put("service", "vobiz-call-masking");
+        m.put("service", "appointment-service (call-first, on Vobiz masking)");
         m.put("time", Instant.now().toString());
         return ok(m);
     }
