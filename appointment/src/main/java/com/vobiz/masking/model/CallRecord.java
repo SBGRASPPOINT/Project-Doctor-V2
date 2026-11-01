@@ -92,6 +92,10 @@ public class CallRecord implements Jsonable {
     @Column(name = "callback_id")
     private Long callbackId;
 
+    /** Set on outbound reminder legs (voice reminders placed via M1). */
+    @Column(name = "reminder_id")
+    private Long reminderId;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 

@@ -58,6 +58,20 @@ public class CallDao {
         return repo.save(c);
     }
 
+    /** Outbound reminder leg: M1 → patient, linked to the reminder row. */
+    @Transactional
+    public CallRecord insertOutboundReminder(String callUuid, String patientNumber, long reminderId) {
+        CallRecord c = new CallRecord();
+        c.setCallUuid(callUuid);
+        c.setDirection("outbound");
+        c.setCallerNumber(patientNumber);
+        c.setDialedNumber("via M1 (reminder)");
+        c.setReminderId(reminderId);
+        c.setStatus("in_progress");
+        c.setStartedAt(Instant.now());
+        return repo.save(c);
+    }
+
     public Optional<CallRecord> findByUuid(String callUuid) {
         return repo.findByCallUuid(callUuid);
     }
