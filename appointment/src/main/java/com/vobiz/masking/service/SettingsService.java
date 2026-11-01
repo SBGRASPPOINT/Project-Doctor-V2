@@ -3,6 +3,8 @@ package com.vobiz.masking.service;
 import com.vobiz.masking.repo.SettingsDao;
 import com.vobiz.masking.util.ApiException;
 
+import java.time.LocalTime;
+import java.time.ZoneId;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
@@ -14,9 +16,19 @@ public class SettingsService {
     public static final Set<String> KEYS = Set.of(
             "m1_number", "ring_timeout_sec", "voicemail_max_sec", "record_silence_timeout_sec",
             "routing_mode", "respect_presence", "announce_recording",
-            "announcement_text", "greeting_text", "closing_text");
+            "announcement_text", "greeting_text", "closing_text",
+            // appointment / IVR / reminder keys
+            "ivr_enabled", "ivr_max_hops", "booking_horizon_days", "min_booking_lead_minutes",
+            "max_slots_offered", "slot_granularity_min", "clinic_timezone", "clinic_name",
+            "allow_self_booking", "allow_self_cancel_hours",
+            "reminder_t24h_enabled", "reminder_t24h_lead_minutes",
+            "reminder_t2h_enabled", "reminder_t2h_lead_minutes",
+            "reminder_retry_count", "reminder_retry_gap_minutes",
+            "reminder_quiet_start", "reminder_quiet_end", "reminder_scan_ms",
+            "sms_fallback_enabled", "change_notification_enabled");
 
     private static final Pattern E164 = Pattern.compile("^\\+[1-9]\\d{6,14}$");
+    private static final Pattern HH_MM = Pattern.compile("^([01]\\d|2[0-3]):[0-5]\\d$");
 
     private final SettingsDao dao;
 
