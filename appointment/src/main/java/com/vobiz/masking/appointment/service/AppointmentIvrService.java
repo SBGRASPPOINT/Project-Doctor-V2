@@ -535,6 +535,11 @@ public class AppointmentIvrService {
         return s.getHops() > settings.ivrMaxHops();
     }
 
+    /** Pure: after two no-inputs, or past the hop cap, escape to the human path. */
+    public static boolean shouldEscapeToHuman(int noInputCount, int hops, int maxHops) {
+        return noInputCount >= 2 || hops > maxHops;
+    }
+
     private List<Appointment> upcoming(IvrSession s) {
         if (s.getPatientId() == null) return List.of();
         return appointments.upcomingForPatient(s.getPatientId(), 9);
