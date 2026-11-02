@@ -6,6 +6,7 @@ import org.springframework.jdbc.core.RowMapper;
 
 import java.sql.Timestamp;
 import java.time.Instant;
+import java.time.ZoneId;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -27,18 +28,20 @@ public class ReminderDao {
         return repo;
     }
 
-    /** Dashboard counters. */
-    public Map<String, Object> stats() {
+    /** Dashboard counters. "today" uses the clinic timezone, not the DB session zone. */
+    public Map<String, Object> stats(ZoneId zone) {
         String sql = "SELECT count(*) AS total, "
                 + "count(*) FILTER (WHERE status = 'pending') AS pending, "
                 + "count(*) FILTER (WHERE status = 'placed') AS placed, "
                 + "count(*) FILTER (WHERE status = 'answered_confirmed') AS confirmed, "
-                + "count(*) FILTER (WHERE status = 'answered_rescheduled') AS rescheduled, "
+                // 'answered_reschedule_requested': patient asked for reception, nothing rescheduled yet.
+                + "count(*) FILTER (WHERE status = 'answered_reschedule_requested') AS rescheduled, "
                 + "count(*) FILTER (WHERE status = 'answered_cancelled') AS cancelled, "
+                + "count(*) FILTER (WHERE status = 'answered') AS answered, "
                 + "count(*) FILTER (WHERE status = 'no_answer') AS no_answer, "
-                + "count(*) FILTER (WHERE last_attempt_at >= current_date) AS sent_today "
+                + "count(*) FILTER (WHERE last_attempt_at >= (now() AT TIME ZONE ?)::date) AS sent_today "
                 + "FROM reminders";
-        Map<String, Object> row = jdbc.queryForMap(sql);
+        Map<String, Object> row = jdbc.queryForMap(sql, zone.getId());
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("reminders_total", lng(row.get("total")));
         m.put("reminders_pending", lng(row.get("pending")));
@@ -46,6 +49,7 @@ public class ReminderDao {
         m.put("reminders_confirmed", lng(row.get("confirmed")));
         m.put("reminders_rescheduled", lng(row.get("rescheduled")));
         m.put("reminders_cancelled", lng(row.get("cancelled")));
+        m.put("reminders_answered", lng(row.get("answered")));
         m.put("reminders_no_answer", lng(row.get("no_answer")));
         m.put("reminders_sent_today", lng(row.get("sent_today")));
         return m;

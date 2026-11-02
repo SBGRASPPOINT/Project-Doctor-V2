@@ -95,9 +95,12 @@ public class AvailabilityService {
                 .orElseThrow(() -> new ApiException(404, "Doctor not found: " + doctorId));
         ZoneId zone = settings.clinicZone();
         Instant now = Instant.now();
+        if (!doc.isActive()) return false;
         if (startsAt.isBefore(now.plusSeconds(settings.minBookingLeadMinutes() * 60L))) return false;
-        Instant end = startsAt.plusSeconds(durationMin * 60L);
         LocalDate date = startsAt.atZone(zone).toLocalDate();
+        // Same horizon the slot menu enforces — otherwise the REST API could book outside it.
+        if (date.isAfter(LocalDate.now(zone).plusDays(settings.bookingHorizonDays()))) return false;
+        Instant end = startsAt.plusSeconds(durationMin * 60L);
         for (Instant[] b : busyRanges(doctorId, date, zone)) {
             if (startsAt.isBefore(b[1]) && end.isAfter(b[0])) return false;
         }

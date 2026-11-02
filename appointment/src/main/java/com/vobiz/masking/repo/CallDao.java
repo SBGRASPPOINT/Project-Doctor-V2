@@ -8,6 +8,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.sql.Timestamp;
 import java.time.Instant;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -32,8 +33,16 @@ public class CallDao {
         this.jdbc = jdbc;
     }
 
+    /**
+     * Inbound leg for a call. Idempotent on call_uuid: Vobiz retries a webhook that timed out,
+     * and the UNIQUE constraint on calls.call_uuid used to turn that retry into an exception —
+     * which the voice dispatcher answers with an empty {@code <Response>}, dropping a live call.
+     * Now a retry finds the existing row and the caller hears the same greeting again.
+     */
     @Transactional
     public CallRecord insertInbound(String callUuid, String from, String to) {
+        Optional<CallRecord> existing = repo.findByCallUuid(callUuid);
+        if (existing.isPresent()) return existing.get();
         CallRecord c = new CallRecord();
         c.setCallUuid(callUuid);
         c.setDirection("inbound");
@@ -46,6 +55,8 @@ public class CallDao {
 
     @Transactional
     public CallRecord insertOutbound(String callUuid, String customerNumber, long agentId, long callbackId) {
+        Optional<CallRecord> existing = repo.findByCallUuid(callUuid);
+        if (existing.isPresent()) return existing.get();
         CallRecord c = new CallRecord();
         c.setCallUuid(callUuid);
         c.setDirection("outbound");
@@ -61,6 +72,8 @@ public class CallDao {
     /** Outbound reminder leg: M1 → patient, linked to the reminder row. */
     @Transactional
     public CallRecord insertOutboundReminder(String callUuid, String patientNumber, long reminderId) {
+        Optional<CallRecord> existing = repo.findByCallUuid(callUuid);
+        if (existing.isPresent()) return existing.get();
         CallRecord c = new CallRecord();
         c.setCallUuid(callUuid);
         c.setDirection("outbound");
@@ -167,16 +180,20 @@ public class CallDao {
         return jdbc.query(sql.toString(), ROW_MAPPER, params.toArray());
     }
 
-    /** Dashboard counters. Native SQL via JDBC (FILTER aggregates). */
-    public Map<String, Object> stats() {
+    /**
+     * Dashboard counters. "today" is the CLINIC's day, not the database session's: the old
+     * {@code current_date} resolved in the DB zone (UTC), so the counters were wrong for the
+     * 5.5-hour offset of Asia/Kolkata.
+     */
+    public Map<String, Object> stats(ZoneId zone) {
         String sql = "SELECT count(*) AS total, "
                 + "count(*) FILTER (WHERE direction = 'inbound') AS inbound, "
                 + "count(*) FILTER (WHERE status = 'in_progress') AS live, "
-                + "count(*) FILTER (WHERE created_at >= current_date) AS today, "
-                + "count(*) FILTER (WHERE created_at >= current_date AND status = 'answered') AS answered_today, "
+                + "count(*) FILTER (WHERE created_at >= (now() AT TIME ZONE ?)::date) AS today, "
+                + "count(*) FILTER (WHERE created_at >= (now() AT TIME ZONE ?)::date AND status = 'answered') AS answered_today, "
                 + "count(*) FILTER (WHERE status = 'voicemail') AS voicemails "
                 + "FROM calls";
-        Map<String, Object> row = jdbc.queryForMap(sql);
+        Map<String, Object> row = jdbc.queryForMap(sql, zone.getId(), zone.getId());
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("calls_total", lng(row.get("total")));
         m.put("calls_inbound", lng(row.get("inbound")));

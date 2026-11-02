@@ -4,12 +4,10 @@ import com.vobiz.masking.appointment.model.Appointment;
 import com.vobiz.masking.appointment.model.AppointmentEvent;
 import com.vobiz.masking.appointment.model.Doctor;
 import com.vobiz.masking.appointment.model.Patient;
-import com.vobiz.masking.appointment.model.WaitlistEntry;
 import com.vobiz.masking.appointment.repo.AppointmentEventRepository;
 import com.vobiz.masking.appointment.repo.AppointmentRepository;
 import com.vobiz.masking.appointment.repo.DoctorRepository;
 import com.vobiz.masking.appointment.repo.PatientRepository;
-import com.vobiz.masking.appointment.repo.WaitlistEntryRepository;
 import com.vobiz.masking.service.SettingsService;
 import com.vobiz.masking.util.ApiException;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -41,27 +39,52 @@ public class AppointmentService {
     private static final Set<String> CLOSED_STATUSES = Set.of(
             Appointment.STATUS_CANCELLED, Appointment.STATUS_COMPLETED, Appointment.STATUS_NO_SHOW);
 
+    /**
+     * The only legal status transitions. This is the single source of truth for the lifecycle:
+     * cancelled/completed/no_show are terminal, so a cancelled appointment can never be
+     * "confirmed" back to life with a NULL slot_key (which used to break the UNIQUE slot_key
+     * invariant that makes double booking impossible).
+     */
+    private static final Map<String, Set<String>> ALLOWED_TRANSITIONS = Map.of(
+            Appointment.STATUS_REQUESTED, Set.of(
+                    Appointment.STATUS_CONFIRMED, Appointment.STATUS_RESCHEDULED,
+                    Appointment.STATUS_CANCELLED, Appointment.STATUS_NO_SHOW),
+            Appointment.STATUS_CONFIRMED, Set.of(
+                    Appointment.STATUS_RESCHEDULED, Appointment.STATUS_COMPLETED,
+                    Appointment.STATUS_CANCELLED, Appointment.STATUS_NO_SHOW),
+            Appointment.STATUS_RESCHEDULED, Set.of(
+                    Appointment.STATUS_CONFIRMED, Appointment.STATUS_COMPLETED,
+                    Appointment.STATUS_CANCELLED, Appointment.STATUS_NO_SHOW),
+            Appointment.STATUS_CANCELLED, Set.of(),
+            Appointment.STATUS_COMPLETED, Set.of(),
+            Appointment.STATUS_NO_SHOW, Set.of());
+
     private final AppointmentRepository appointmentRepo;
     private final AppointmentEventRepository eventRepo;
     private final PatientRepository patientRepo;
     private final DoctorRepository doctorRepo;
-    private final WaitlistEntryRepository waitlistRepo;
     private final AvailabilityService availability;
     private final ReminderService reminders;
     private final SettingsService settings;
 
     public AppointmentService(AppointmentRepository appointmentRepo, AppointmentEventRepository eventRepo,
                               PatientRepository patientRepo, DoctorRepository doctorRepo,
-                              WaitlistEntryRepository waitlistRepo, AvailabilityService availability,
+                              AvailabilityService availability,
                               ReminderService reminders, SettingsService settings) {
         this.appointmentRepo = appointmentRepo;
         this.eventRepo = eventRepo;
         this.patientRepo = patientRepo;
         this.doctorRepo = doctorRepo;
-        this.waitlistRepo = waitlistRepo;
         this.availability = availability;
         this.reminders = reminders;
         this.settings = settings;
+    }
+
+    /** Pure lifecycle rule — unit-tested without a database. */
+    public static boolean canTransition(String from, String to) {
+        if (from == null || to == null) return false;
+        if (from.equals(to)) return true;                    // no-op
+        return ALLOWED_TRANSITIONS.getOrDefault(from, Set.of()).contains(to);
     }
 
     public Appointment get(long id) {
@@ -87,6 +110,8 @@ public class AppointmentService {
                 .orElseThrow(() -> new ApiException(404, "Patient not found: " + patientId));
         Doctor d = doctorRepo.findById(doctorId)
                 .orElseThrow(() -> new ApiException(404, "Doctor not found: " + doctorId));
+        if (!d.isActive())
+            throw new ApiException(409, "Doctor " + d.getName() + " is not accepting appointments");
         int dur = durationMin != null && durationMin > 0 ? durationMin
                 : (d.getSlotMinutes() > 0 ? d.getSlotMinutes() : settings.slotGranularityMin());
         String key = slotKey(doctorId, startsAt);
@@ -147,50 +172,66 @@ public class AppointmentService {
     public Appointment cancel(long id, String reason, String actor) {
         Appointment a = get(id);
         if (Appointment.STATUS_CANCELLED.equals(a.getStatus())) return a;
-        String from = a.getStatus();
-        a.setStatus(Appointment.STATUS_CANCELLED);
+        if (!canTransition(a.getStatus(), Appointment.STATUS_CANCELLED))
+            throw new ApiException(409, "Appointment " + id + " is " + a.getStatus() + " and cannot be cancelled");
         a.setCancellationReason(reason);
-        a.setCancelledAt(Instant.now());
-        a.setSlotKey(null);                       // the slot becomes bookable again
-        a = appointmentRepo.save(a);
-        event(a.getId(), "cancelled", from, Appointment.STATUS_CANCELLED, actor, null,
+        // transition() owns the cancelled bookkeeping: cancelled_at, slot_key=NULL (frees the
+        // slot), reminder suppression and the staff change-notification.
+        return transition(a, Appointment.STATUS_CANCELLED, "cancelled", actor, false,
                 Map.of("reason", reason == null ? "" : reason));
-        reminders.suppressPending(a.getId());
-        if (actor != null && !actor.equals("patient_ivr") && settings.changeNotificationEnabled()) {
-            reminders.enqueueChange(a, "Cancelled" + (reason == null || reason.isBlank() ? "" : ": " + reason));
-        }
-        // offer the freed slot to waiting patients of this doctor
-        for (WaitlistEntry w : waitlistRepo.findByStatusAndDoctorIdOrderByCreatedAtAsc("waiting", a.getDoctorId())) {
-            w.setStatus("offered");
-            waitlistRepo.save(w);
-        }
-        return a;
     }
 
     @Transactional
     public Appointment confirm(long id, String actor) {
-        return transition(id, Appointment.STATUS_CONFIRMED, "confirmed", actor, true);
+        return transition(get(id), Appointment.STATUS_CONFIRMED, "confirmed", actor, true, Map.of());
     }
 
     @Transactional
     public Appointment complete(long id) {
-        return transition(id, Appointment.STATUS_COMPLETED, "completed", "system", false);
+        return transition(get(id), Appointment.STATUS_COMPLETED, "completed", "system", false, Map.of());
     }
 
     @Transactional
     public Appointment markNoShow(long id) {
-        return transition(id, Appointment.STATUS_NO_SHOW, "no_show", "system", false);
+        return transition(get(id), Appointment.STATUS_NO_SHOW, "no_show", "system", false, Map.of());
     }
 
-    private Appointment transition(long id, String status, String eventType, String actor, boolean setConfirmedAt) {
-        Appointment a = get(id);
+    /**
+     * The one and only status writer. Every path (confirm/complete/no-show/cancel/PATCH status)
+     * goes through here so side effects can never be skipped: a cancelled slot is always
+     * released, its reminders always suppressed, and terminal statuses are never left open.
+     */
+    private Appointment transition(Appointment a, String status, String eventType, String actor,
+                                   boolean setConfirmedAt, Map<String, Object> payload) {
         String from = a.getStatus();
+        if (status.equals(from)) return a;
+        if (!canTransition(from, status))
+            throw new ApiException(409, "Cannot change status from " + from + " to " + status);
+
+        Instant now = Instant.now();
         a.setStatus(status);
-        if (setConfirmedAt) a.setConfirmedAt(Instant.now());
-        if (Appointment.STATUS_COMPLETED.equals(status)) a.setCompletedAt(Instant.now());
-        if (Appointment.STATUS_CANCELLED.equals(status)) a.setCancelledAt(Instant.now());
+        if (Appointment.STATUS_COMPLETED.equals(status)) {
+            a.setCompletedAt(now);
+            a.setNeedsRebooking(false);
+        } else if (Appointment.STATUS_CANCELLED.equals(status)) {
+            a.setCancelledAt(now);
+            a.setSlotKey(null);              // the slot becomes bookable again
+            a.setNeedsRebooking(false);
+        } else if (Appointment.STATUS_NO_SHOW.equals(status)) {
+            a.setNeedsRebooking(false);
+        } else if (setConfirmedAt && OPEN_STATUSES.contains(status)) {
+            a.setConfirmedAt(now);
+        }
         a = appointmentRepo.save(a);
-        event(a.getId(), eventType, from, status, actor, null, Map.of());
+        event(a.getId(), eventType, from, status, actor, null, payload == null ? Map.of() : payload);
+
+        if (Appointment.STATUS_CANCELLED.equals(status)) {
+            reminders.suppressPending(a.getId());
+            if (actor != null && !actor.equals("patient_ivr") && settings.changeNotificationEnabled()) {
+                String reason = a.getCancellationReason();
+                reminders.enqueueChange(a, "Cancelled" + (reason == null || reason.isBlank() ? "" : ": " + reason));
+            }
+        }
         return a;
     }
 
@@ -198,17 +239,20 @@ public class AppointmentService {
     @Transactional
     public Appointment update(long id, Map<String, Object> body) {
         Appointment a = get(id);
+        String target = null;
+        if (body.containsKey("status")) {
+            target = String.valueOf(body.get("status"));
+            if (!Set.of(Appointment.STATUS_REQUESTED, Appointment.STATUS_CONFIRMED, Appointment.STATUS_RESCHEDULED,
+                    Appointment.STATUS_CANCELLED, Appointment.STATUS_COMPLETED, Appointment.STATUS_NO_SHOW).contains(target))
+                throw new ApiException(400, "Unknown status: " + target);
+            if (!canTransition(a.getStatus(), target))
+                throw new ApiException(409, "Cannot change status from " + a.getStatus() + " to " + target);
+        }
         if (body.containsKey("notes")) a.setNotes(str(body.get("notes"), 2000));
         if (body.containsKey("reason")) a.setReason(str(body.get("reason"), 2000));
-        if (body.containsKey("status")) {
-            String s = String.valueOf(body.get("status"));
-            if (!Set.of(Appointment.STATUS_REQUESTED, Appointment.STATUS_CONFIRMED, Appointment.STATUS_RESCHEDULED,
-                    Appointment.STATUS_CANCELLED, Appointment.STATUS_COMPLETED, Appointment.STATUS_NO_SHOW).contains(s))
-                throw new ApiException(400, "Unknown status: " + s);
-            transition(a.getId(), s, "updated", "agent", false);
-            return get(id);
-        }
-        return appointmentRepo.save(a);
+        a = appointmentRepo.save(a);          // notes/reason are kept even when a status change follows
+        if (target != null) a = transition(a, target, "updated", "agent", false, Map.of());
+        return a;
     }
 
     // ---------- helpers ----------
