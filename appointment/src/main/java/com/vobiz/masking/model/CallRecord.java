@@ -1,5 +1,6 @@
 package com.vobiz.masking.model;
 
+import com.vobiz.masking.appointment.model.Reminder;
 import com.vobiz.masking.util.Json.Jsonable;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
