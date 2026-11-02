@@ -11,6 +11,9 @@ import jakarta.persistence.PrePersist;
 import jakarta.persistence.Table;
 import jakarta.persistence.Transient;
 import jakarta.persistence.UniqueConstraint;
+import jakarta.persistence.ManyToOne;
+import jakarta.persistence.JoinColumn;
+import jakarta.persistence.FetchType;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
@@ -63,7 +66,14 @@ public class Reminder implements Jsonable {
     @Column(nullable = false, length = 8)
     private String channel = "voice";
 
-    /** pending | placed | answered_confirmed | answered_rescheduled | answered_cancelled | no_answer | failed | suppressed */
+    /**
+     * pending     — due scan will place a call
+     * placed      — outbound leg placed, outcome not known yet
+     * answered    — patient picked up (>= 5s) but pressed no key; never auto-redialled
+     * answered_confirmed / answered_cancelled — keypad 1 / 3
+     * answered_reschedule_requested — keypad 2: caller sent to reception, nothing rescheduled yet
+     * no_answer / failed / suppressed
+     */
     @Column(nullable = false, length = 24)
     private String status = "pending";
 

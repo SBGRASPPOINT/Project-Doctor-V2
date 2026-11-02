@@ -82,6 +82,114 @@ public class SettingsService {
         return dao.get("closing_text", "Thank you. We will call you back shortly.");
     }
 
+    // ---------- appointment / IVR / reminder accessors ----------
+    // These accessors were missing: AppointmentService, AvailabilityService,
+    // AppointmentIvrService, ReminderService and ScheduleService all call them, so the
+    // module did not compile. Every key below is whitelisted in KEYS and validated in
+    // validate(), and the defaults here match DataSeeder's seeded values.
+
+    public boolean ivrEnabled() {
+        return dao.getBool("ivr_enabled", true);
+    }
+
+    public int ivrMaxHops() {
+        return dao.getInt("ivr_max_hops", 12);
+    }
+
+    public int bookingHorizonDays() {
+        return dao.getInt("booking_horizon_days", 30);
+    }
+
+    public int minBookingLeadMinutes() {
+        return dao.getInt("min_booking_lead_minutes", 60);
+    }
+
+    public int maxSlotsOffered() {
+        return dao.getInt("max_slots_offered", 3);
+    }
+
+    public int slotGranularityMin() {
+        return dao.getInt("slot_granularity_min", 15);
+    }
+
+    public boolean allowSelfBooking() {
+        return dao.getBool("allow_self_booking", true);
+    }
+
+    public int allowSelfCancelHours() {
+        return dao.getInt("allow_self_cancel_hours", 4);
+    }
+
+    public String clinicName() {
+        return dao.get("clinic_name", "City Care Clinic");
+    }
+
+    /** Clinic timezone; falls back to the JVM zone if the stored value is not a valid IANA id. */
+    public ZoneId clinicZone() {
+        String v = dao.get("clinic_timezone", "Asia/Kolkata");
+        String id = (v == null || v.isBlank()) ? "Asia/Kolkata" : v.trim();
+        try {
+            return ZoneId.of(id);
+        } catch (Exception e) {
+            return ZoneId.systemDefault();
+        }
+    }
+
+    public boolean reminderT24hEnabled() {
+        return dao.getBool("reminder_t24h_enabled", true);
+    }
+
+    public int reminderT24hLeadMinutes() {
+        return dao.getInt("reminder_t24h_lead_minutes", 1440);
+    }
+
+    public boolean reminderT2hEnabled() {
+        return dao.getBool("reminder_t2h_enabled", true);
+    }
+
+    public int reminderT2hLeadMinutes() {
+        return dao.getInt("reminder_t2h_lead_minutes", 120);
+    }
+
+    public int reminderRetryCount() {
+        return dao.getInt("reminder_retry_count", 2);
+    }
+
+    public int reminderRetryGapMinutes() {
+        return dao.getInt("reminder_retry_gap_minutes", 30);
+    }
+
+    public LocalTime reminderQuietStart() {
+        return quietTime("reminder_quiet_start", LocalTime.of(8, 0));
+    }
+
+    public LocalTime reminderQuietEnd() {
+        return quietTime("reminder_quiet_end", LocalTime.of(20, 0));
+    }
+
+    /** Scheduler scan interval. Read on every tick, so an edit in the console takes effect. */
+    public int reminderScanMs() {
+        return dao.getInt("reminder_scan_ms", 60000);
+    }
+
+    public boolean smsFallbackEnabled() {
+        return dao.getBool("sms_fallback_enabled", false);
+    }
+
+    public boolean changeNotificationEnabled() {
+        return dao.getBool("change_notification_enabled", true);
+    }
+
+    private LocalTime quietTime(String key, LocalTime def) {
+        String v = dao.get(key, null);
+        if (v == null || v.isBlank()) return def;
+        try {
+            return LocalTime.parse(v.trim());
+        } catch (Exception e) {
+            return def;
+        }
+    }
+
     public Map<String, String> update(Map<String, Object> body) {
         if (body == null || body.isEmpty()) throw new ApiException(400, "Empty settings payload");
         for (Map.Entry<String, Object> e : body.entrySet()) {
