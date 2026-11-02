@@ -37,7 +37,18 @@ public final class Json {
             sb.append("null");
         } else if (v instanceof String s) {
             writeString(sb, s);
-        } else if (v instanceof Boolean || v instanceof Number) {
+        } else if (v instanceof Boolean) {
+            sb.append(v);
+        } else if (v instanceof Number) {
+            // Render integral floating-point values without a trailing ".0": a value that came in
+            // as 7.0 must not round-trip out as "7.0" when 7 is what the caller sent.
+            if (v instanceof Double || v instanceof Float) {
+                double d = ((Number) v).doubleValue();
+                if (Double.isFinite(d) && d == Math.rint(d) && Math.abs(d) < 1e15) {
+                    sb.append((long) d);
+                    return;
+                }
+            }
             sb.append(v);
         } else if (v instanceof Jsonable j) {
             writeValue(sb, j.toMap());

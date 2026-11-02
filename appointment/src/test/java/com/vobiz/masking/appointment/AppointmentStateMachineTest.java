@@ -23,9 +23,15 @@ class AppointmentStateMachineTest {
                 Appointment.STATUS_RESCHEDULED}) {
             assertTrue(AppointmentService.canTransition(from, Appointment.STATUS_CONFIRMED), from);
             assertTrue(AppointmentService.canTransition(from, Appointment.STATUS_RESCHEDULED), from);
-            assertTrue(AppointmentService.canTransition(from, Appointment.STATUS_COMPLETED), from);
             assertTrue(AppointmentService.canTransition(from, Appointment.STATUS_NO_SHOW), from);
             assertTrue(AppointmentService.canTransition(from, Appointment.STATUS_CANCELLED), from);
+        }
+        // An appointment that was only ever requested never happened, so it cannot be completed
+        // or marked as a no-show response to a visit; it is cancelled instead.
+        assertFalse(AppointmentService.canTransition(Appointment.STATUS_REQUESTED, Appointment.STATUS_COMPLETED),
+                "requested never went ahead, so it cannot be completed");
+        for (String from : new String[]{Appointment.STATUS_CONFIRMED, Appointment.STATUS_RESCHEDULED}) {
+            assertTrue(AppointmentService.canTransition(from, Appointment.STATUS_COMPLETED), from);
         }
     }
 
@@ -35,8 +41,10 @@ class AppointmentStateMachineTest {
                 Appointment.STATUS_NO_SHOW}) {
             for (String to : new String[]{Appointment.STATUS_REQUESTED, Appointment.STATUS_CONFIRMED,
                     Appointment.STATUS_RESCHEDULED, Appointment.STATUS_COMPLETED, Appointment.STATUS_NO_SHOW}) {
+                if (from.equals(to)) continue;                    // re-writing the same status is a no-op
                 assertFalse(AppointmentService.canTransition(from, to), from + " -> " + to);
             }
+            assertTrue(AppointmentService.canTransition(from, from), from + " -> " + from + " (no-op)");
         }
     }
 

@@ -27,7 +27,7 @@ class JsonTest {
         @SuppressWarnings("unchecked")
         Map<String, Object> bm = (Map<String, Object>) back;
         assertEquals("Agent \"N2\"", bm.get("name"));
-        assertEquals(7L, bm.get("id"));
+        assertEquals(7L, ((Number) bm.get("id")).longValue());
         assertEquals(Boolean.TRUE, bm.get("active"));
         assertEquals(List.of("a", "b"), bm.get("tags"));
         assertTrue(bm.containsKey("nothing") && bm.get("nothing") == null);
@@ -41,9 +41,9 @@ class JsonTest {
         Map<String, Object> m = (Map<String, Object>) v;
         @SuppressWarnings("unchecked")
         List<Object> arr = (List<Object>) ((Map<String, Object>) m.get("a")).get("b");
-        assertEquals(1L, arr.get(0));
-        assertEquals(2.5, arr.get(1));
-        assertEquals(-3L, arr.get(2));
+        assertEquals(1L, ((Number) arr.get(0)).longValue());
+        assertEquals(2.5, ((Number) arr.get(1)).doubleValue());
+        assertEquals(-3L, ((Number) arr.get(2)).longValue());
         assertEquals("x\ny", m.get("c"));
     }
 
