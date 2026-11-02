@@ -41,7 +41,7 @@ jobs:
             # Surface compiler/test errors as annotations: they are visible on the PR and in the
             # checks API without downloading the (large) raw job log.
             grep -E "error:|symbol:|location:|FAILED|Caused by:" gradle-build.log \
-              | head -10 | while IFS= read -r line; do echo "::error title=Gradle::$line"; done
+              | head -40 | while IFS= read -r line; do echo "::error title=Gradle::$line"; done
           fi
           exit "$status"
 

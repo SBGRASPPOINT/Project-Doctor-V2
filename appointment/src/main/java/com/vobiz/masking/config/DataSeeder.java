@@ -193,17 +193,17 @@ public class DataSeeder implements ApplicationRunner {
             return departments.save(d);
         });
         if (doctors.findAll().stream().noneMatch(d -> "Dr. Sharma".equalsIgnoreCase(d.getName()))) {
-            Doctor doc = new Doctor();
+            final Doctor doc = new Doctor();
             doc.setName("Dr. Sharma");
             doc.setSpecialization("General Practitioner");
             doc.setDepartmentId(dep.getId());
             doc.setSlotMinutes(15);
             doc.setActive(true);
             agents.findByPhoneE164("+15551230001").ifPresent(a -> doc.setAgentId(a.getId()));
-            doc = doctors.save(doc);
+            Doctor saved = doctors.save(doc);
             for (int dow = 1; dow <= 5; dow++) {   // Mon–Fri 10:00–13:00
                 DoctorSchedule s = new DoctorSchedule();
-                s.setDoctorId(doc.getId());
+                s.setDoctorId(saved.getId());
                 s.setDayOfWeek(dow);
                 s.setStartTime(LocalTime.of(10, 0));
                 s.setEndTime(LocalTime.of(13, 0));
