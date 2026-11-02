@@ -121,8 +121,10 @@ public class CallbackService {
             } else {
                 throw new ApiException(400, "assigned_agent_id must be a number or null");
             }
-            if (assigned != null)
-                agentDao.findById(assigned).orElseThrow(() -> new ApiException(404, "Agent not found: " + assigned));
+            if (assigned != null) {
+                final long agentId = assigned;
+                agentDao.findById(agentId).orElseThrow(() -> new ApiException(404, "Agent not found: " + agentId));
+            }
         }
         callbackDao.update(id, status, notes, assigned);
         return callbackDao.findById(id).orElseThrow(() -> new ApiException(500, "Update failed"));
