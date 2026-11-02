@@ -45,12 +45,38 @@ jobs:
           fi
           exit "$status"
 
+      # Failing tests are invisible in the raw log from some networks, so turn the JUnit XML
+      # into annotations: they show up on the PR and via the checks API.
+      - name: Annotate failing tests
+        if: failure()
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import glob, xml.etree.ElementTree as ET
+          n = 0
+          for f in sorted(glob.glob("build/test-results/test/TEST-*.xml")):
+              for tc in ET.parse(f).getroot().iter("testcase"):
+                  for kind in ("failure", "error"):
+                      node = tc.find(kind)
+                      if node is None:
+                          continue
+                      msg = (node.get("message") or node.get("type") or kind).strip()
+                      msg = " ".join(msg.split())[:400].replace("%", "%25").replace("\r", "").replace("\n", " ")
+                      name = f"{tc.get('classname')}.{tc.get('name')}"
+                      print(f"::error title={name}::{msg}")
+                      n += 1
+                      break
+          print(f"annotated {n} failing test(s)")
+          PY
+
       - name: Upload test reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: test-reports
-          path: appointment/build/reports/tests/
+          path: |
+            appointment/build/reports/tests/
+            appointment/build/test-results/
           retention-days: 7
 
   postgres-integration:
