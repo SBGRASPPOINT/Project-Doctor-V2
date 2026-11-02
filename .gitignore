@@ -2,11 +2,11 @@
 /node_modules
 /MySQL
 
-# Production
+# Build output
 /build
 /dist
 /out
-re
+
 # Logs
 logs
 *.log
@@ -15,11 +15,20 @@ yarn-debug.log*
 yarn-error.log*
 lerna-debug.log*
 
-# Other
-.DS_Store
+# Environment files (never commit real credentials)
 .env
 .env.local
 .env.development.local
 .env.test.local
 .env.production.local
-*.gemini.md
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+*.iml
+
+# Java service (appointment/)
+appointment/build/
+appointment/.gradle/
+appointment/.idea/

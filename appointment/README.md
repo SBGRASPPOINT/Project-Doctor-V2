@@ -32,13 +32,15 @@ Caller ──dials M1──▶ Vobiz ──POST /voice/answer {From,To,CallUUID}
 ```
 appointment/
 ├── build.gradle.kts / settings.gradle.kts / gradlew   # Gradle 9.8, Java 25 toolchain, Boot 4.1.2
-├── docker-compose.yml                                  # PostgreSQL 17
+├── Dockerfile                                          # multi-stage JDK 25 → JRE 25, non-root, healthcheck
+├── docker-compose.yml                                  # PostgreSQL 17 + the service
 ├── scripts/simulate-call.sh                            # end-to-end demo of the webhook flows (curl)
 └── src/main/
     ├── java/com/vobiz/masking/
     │   ├── MaskingApplication.java                     # @SpringBootApplication
-    │   ├── config/            AppProperties, VobizProperties, AppBeans (composition root), DataSeeder
-    │   │                      (default settings + demo agents, inserted only when missing)
+    │   ├── config/            AppProperties, VobizProperties, AppBeans (composition root),
+    │   │                      DataSeeder (settings + templates, demo rows only with APP_SEED_DEMO_DATA),
+    │   │                      ConfigValidator (fails startup on placeholder production config)
     │   ├── web/               VoiceWebhookController, ApiController (thin Spring adapters)
     │   │                      Handlers, HttpResult (ALL routing logic — framework-free, unit-tested)
     │   ├── service/           CallFlowService (voice webhooks), RoutingService, AgentService,
@@ -50,10 +52,13 @@ appointment/
     │   │                      (Lombok); Hibernate creates/updates the tables from them
     │   ├── xml/VobizXml.java  # builds the <Response> XML (Dial/Speak/Record/Hangup)
     │   ├── vobiz/VobizClient.java                      # outbound Call API (X-Auth-ID/X-Auth-Token headers)
+    │   ├── security/          AuthFilter (bearer token for /api/**, signed /voice/** webhooks),
+    │   │                      WebhookSigner (appends ?secret= to every URL handed to Vobiz)
     │   └── util/              Json (parser/writer), Forms (urlencoded), ApiException
     └── resources/
-        ├── application.properties                      # env-driven config; spring.jpa.hibernate.ddl-auto=update
-        ├── log4j2-spring.xml                           # Log4j2 console logging
+        ├── application.properties                      # env-driven config; DDL_AUTO (default update)
+        ├── log4j2-spring.xml                           # Log4j2 console logging, level via LOG_LEVEL
+        ├── db/migration/                               # Flyway baseline landing zone (see "Schema and migrations")
         └── static/                                     # ops console: index.html + app.js + styles.css
 ```
 
@@ -77,8 +82,9 @@ cd appointment
 docker compose up -d
 
 # 2. configure (optional for a first local run — defaults work, Vobiz calls are mocked)
-cp .env.example .env   # then edit: PUBLIC_BASE_URL, M1_NUMBER, VOBIZ_AUTH_ID/TOKEN…
-#   or just export env vars; see .env.example
+cp .env.example .env   # then edit: PUBLIC_BASE_URL, M1_NUMBER, API_TOKEN, WEBHOOK_SECRET, VOBIZ_*
+#   or just export env vars; see .env.example. The console prompts for API_TOKEN on first load.
+#   Entire stack in containers instead:  docker compose up -d --build
 
 # 3. build & run (Java 25 toolchain, Spring Boot 4.1.2)
 ./gradlew bootRun
@@ -103,6 +109,12 @@ open http://localhost:8080/        # Dashboard / Agents / Call log / Callbacks /
 | `VOBIZ_AUTH_ID` / `VOBIZ_AUTH_TOKEN` | empty | REST credentials for outbound click-to-call. Sent as `X-Auth-ID` / `X-Auth-Token` headers; never stored in code or DB. |
 | `VOBIZ_API_BASE` | `https://api.vobiz.example.com` | Vobiz REST base URL |
 | `VOBIZ_MOCK` | `true` | `true` = log outbound calls instead of calling Vobiz (until credentials are set) |
+| `API_TOKEN` | empty | Bearer token required by `/api/**`. **Set it before exposing the service.** The console asks for it and keeps it in `sessionStorage`. |
+| `WEBHOOK_SECRET` | empty | Shared secret for `/voice/**`; this service appends `?secret=…` to every URL it hands to Vobiz, and `AuthFilter` rejects unsigned webhooks. **Set it before exposing the service.** |
+| `APP_REQUIRE_PRODUCTION_CONFIG` | `false` | `true` = refuse to start while the config still looks local (localhost base URL, placeholder M1, empty tokens…). Also implied once `VOBIZ_MOCK=false` with real credentials. |
+| `APP_SEED_DEMO_DATA` | `false` | Seed two fake agents, a demo doctor/schedule and a demo patient. **Never enable against a live database.** |
+| `LOG_LEVEL` | `info` | Log4j2 level for `com.vobiz.masking` (`debug` locally). |
+| `REMINDER_SCHEDULER_ENABLED` | `true` | Turns the reminder scan on/off (the interval is the `reminder_scan_ms` *setting*). |
 
 ## Setting up Vobiz
 
@@ -111,6 +123,11 @@ open http://localhost:8080/        # Dashboard / Agents / Call log / Callbacks /
    - **Answer URL**: `https://<your-host>/voice/answer` (POST)
    - **Hangup URL**: `https://<your-host>/voice/hangup` (POST)
    - Fallback URL: `https://<your-host>/voice/answer`
+
+   With `WEBHOOK_SECRET` set, append it to the two URLs you type into Vobiz —
+   `https://<your-host>/voice/answer?secret=…` and `…/voice/hangup?secret=…` — otherwise `AuthFilter`
+   answers 401 and the call is dropped. Every URL the service generates for Vobiz (Dial actions,
+   Gather actions, Record callbacks, reminder legs) is signed automatically by `WebhookSigner`.
 3. Attach **M1** to that application.
 4. The Dial action (`/voice/dial-result`, or `/voice/dial-step` in sequential mode) and the
    Record callback (`/voice/recording-done`) are generated automatically from `PUBLIC_BASE_URL`.
@@ -190,6 +207,44 @@ caller ──dials M1──▶ /voice/answer ──▶ <Gather> main menu   pres
 - Set **respect_presence=true** to ring only agents marked `available` in the console (Option B
   presence). Agents can also be marked busy/offline manually.
 
+## Security model
+
+Both halves of the HTTP surface are locked down by `security/AuthFilter`:
+
+| Surface | Requirement | Why it matters |
+|---|---|---|
+| `/api/**` (except `/api/health`) | `Authorization: Bearer $API_TOKEN` | These endpoints list patient names + phone numbers, cancel/reschedule appointments, rewrite `m1_number` and place outbound calls. |
+| `/voice/**` | `?secret=$WEBHOOK_SECRET` or `X-Webhook-Secret` | A webhook caller can book, cancel and feed recording/hangup events. Every URL generated for Vobiz is signed by `security/WebhookSigner`. |
+| static console, `/health` | none | The console itself carries no data; it prompts for the token and keeps it in `sessionStorage`. |
+
+With `API_TOKEN`/`WEBHOOK_SECRET` unset the service runs open, logs a warning at startup, and
+`ConfigValidator` refuses to start in production mode. This is a shared-secret model for a
+single-operator console — move to Spring Security (users, roles, per-request audit) before
+multiple staff need separate logins.
+
+## Appointment lifecycle
+
+`AppointmentService.canTransition` is the single source of truth for status changes:
+
+```
+requested ─┐
+confirmed ─┼─▶ rescheduled ─┐
+rescheduled┘                ├─▶ cancelled | completed | no_show   (terminal)
+                            └─▶ confirmed
+```
+
+`cancelled`, `completed` and `no_show` are terminal, and **every** path that reaches `cancelled`
+(`POST /api/appointments/{id}/cancel`, `PATCH {"status":"cancelled"}`, the IVR and the reminder
+keypad) goes through the same writer, which clears `slot_key`, suppresses pending reminders and
+queues the staff change-notification. Previously the `PATCH` path skipped all of that, leaving the
+slot permanently blocked, and could revive a cancelled appointment with a NULL `slot_key`.
+
+Reminder statuses reflect what actually happened: `answered` (call picked up, no keypad input),
+`answered_confirmed`, `answered_reschedule_requested` (caller sent to reception, nothing rescheduled
+yet), `answered_cancelled`, `no_answer`, `failed`, `suppressed`. A leg long enough to have been
+listened to (`CallDuration >= 5s`) is never auto-redialled, and `reminder_retry_count` counts the
+*extra* attempts.
+
 ## Compliance notes (India)
 
 - **Announce recording** (TRAI): `announce_recording=true` plays a "this call may be recorded" line
@@ -203,12 +258,33 @@ caller ──dials M1──▶ /voice/answer ──▶ <Gather> main menu   pres
 ## Testing
 
 ```bash
-./gradlew test                 # unit tests (no Spring context): VobizXml/Json/Forms/RoutingService
-                               # + AvailabilityService, AppointmentService, ReminderService,
-                               #   AppointmentIvrService escape rule, PromptService, VobizXml IVR verbs
-./scripts/simulate-call.sh         # masking webhook flow against a running server (mock mode)
-./scripts/simulate-appointment.sh  # IVR book/reschedule/cancel + reminder confirm (mock mode)
+./gradlew test                 # unit tests, no Spring context and no database
+                               #   VobizXml (+IVR verbs), Json (+ nesting/escape hardening), Forms,
+                               #   RoutingService, AvailabilityService, AppointmentService,
+                               #   AppointmentStateMachine, ReminderService, PromptService,
+                               #   SettingsService, WebhookSigner, IvrEscape
+
+# end-to-end demos against a running server (mock mode). They must present the same
+# credentials the server was started with, because both halves of the surface are protected:
+API_TOKEN=dev-token WEBHOOK_SECRET=dev-secret ./scripts/simulate-call.sh
+API_TOKEN=dev-token WEBHOOK_SECRET=dev-secret ./scripts/simulate-appointment.sh
 ```
+
+`.github/workflows/ci.yml` runs `./gradlew build` on every push, boots the app against a real
+PostgreSQL service container and probes `/api/health`, and `node --check`s every JavaScript file
+in the repo.
+
+## Schema and migrations
+
+Today the schema is generated from the `@Entity` classes (`spring.jpa.hibernate.ddl-auto`, env
+`DDL_AUTO`, default `update`). That is fine for development and wrong for production: `update`
+never drops, renames or back-fills, so a column change that needs data migrated has to be applied
+by hand, and two instances starting together can race.
+
+The migration path is prepared, not guessed: `src/main/resources/db/migration/README.md` and
+`scripts/dump-schema.sh` dump the live schema into `V1__baseline.sql`, after which you add Flyway
+and set `DDL_AUTO=validate`. No hand-written baseline SQL is committed, because it would drift from
+the entities it is supposed to describe.
 
 ## Data model (PostgreSQL — tables generated by Hibernate from the JPA entities, no schema.sql)
 
@@ -227,27 +303,27 @@ Appointments:
 - `patients(id, patient_ref UNIQUE, name, phone_e164 UNIQUE, preferred_language, dnd, active, notes, …)`
 - `departments(id, name UNIQUE, active, priority, created_at)`
 - `doctors(id, doctor_ref, name, specialization, department_id, agent_id, slot_minutes, active, …)`
-- `doctor_departments(doctor_id, department_id)` — `@ManyToMany` join table, PK = both columns
 - `doctor_schedules(id, doctor_id, day_of_week, start_time, end_time, slot_minutes, active, …)`
 - `doctor_time_off(id, doctor_id, from_ts, to_ts, full_day, reason, …)`
 - `appointments(id, reference_code UNIQUE, patient_id, doctor_id, department_id, starts_at, ends_at,
   status, source, slot_key UNIQUE, needs_rebooking, version, …)` — `slot_key` cleared on cancel
 - `appointment_events(id, appointment_id, event_type, from_status, to_status, actor, call_uuid, payload JSONB, …)`
 - `reminders(id, appointment_id, kind, UNIQUE(appointment_id,kind), scheduled_at, channel, status,
-  attempts, outbound_call_uuid, response_digit, …)` — kinds `t24h` / `t2h` / `change`
+  attempts, outbound_call_uuid, response_digit, …)` — kinds `t24h` / `t2h` / `change`;
+  statuses `pending|placed|answered|answered_confirmed|answered_reschedule_requested|answered_cancelled|no_answer|failed|suppressed`
 - `ivr_sessions(call_uuid PK, patient_id, caller_number, state, intent, collected JSONB, hops, …)`
 - `message_templates(id, key, language, text, active, UNIQUE(key,language))`
-- `waitlist_entries(id, patient_id, doctor_id, department_id, preferred_from, preferred_to, status, …)`
 
 `call_uuid` joins your log to Vobiz's CDR API (`GET /api/v1/Account/{auth_id}/cdr`) for billing/disputes.
 
 ### Table relations (real JPA associations)
 
-Every relation below is modeled with actual JPA annotations in the entities — `@ManyToOne`,
-`@OneToMany(mappedBy=…)` and one `@ManyToMany` — mapped **read-only** (`insertable=false,
-updatable=false`) onto the existing `*_id` columns, so Hibernate also generates the foreign keys and
-the `doctor_departments` join table on boot, while all existing write paths (plain `Long` setters)
-keep working unchanged. All associations are `FetchType.LAZY` and are never touched by the web layer
+Every relation below is modeled with actual JPA annotations in the entities — `@ManyToOne` and
+`@OneToMany(mappedBy=…)` — mapped **read-only** (`insertable=false, updatable=false`) onto the
+existing `*_id` columns, so Hibernate also generates the foreign keys on boot, while all existing
+write paths (plain `Long` setters) keep working unchanged. Doctors carry a single primary
+`department_id`; there is **no** doctor↔department join table (`@ManyToMany` exists in neither the
+entities nor the schema, whatever earlier versions of this file claimed). All associations are `FetchType.LAZY` and are never touched by the web layer
 (JSON goes through `toMap()`), so they cost nothing on the webhook path. List joins for the console
 stay explicit SQL in the DAOs (`AppointmentDao`: `LEFT JOIN doctors/departments`; `CallDao`/
 `CallbackDao`: `LEFT JOIN agents`). Service-layer checks (`findById` → 404 before any write) plus
@@ -259,14 +335,11 @@ agents 1───< calls.agent_id                         CallRecord.agent      
 agents 1───< callback_requests.assigned_agent_id   CallbackRequest.assignedAgent
 agents 1───< doctors.agent_id                       Doctor.agent                 masked handset link
 departments 1───< doctors.department_id             Doctor.department            primary department
-doctors M───N departments                           Doctor.departments ↔ Department.roster
-                                                    via join table doctor_departments (@ManyToMany)
 departments 1───< appointments.department_id        Appointment.department       display copy
 doctors 1───< doctor_schedules.doctor_id           DoctorSchedule.doctor        UNIQUE(doctor_id, day_of_week, start_time)
 doctors 1───< doctor_time_off.doctor_id            DoctorTimeOff.doctor
 doctors 1───< appointments.doctor_id               Appointment.doctor           idx(doctor_id, starts_at); slot_key UNIQUE
 patients 1───< appointments.patient_id             Appointment.patient          idx(patient_id, starts_at)
-patients 1───< waitlist_entries.patient_id         WaitlistEntry.patient
 calls 1───< appointments.created_via_call_id       Appointment.createdViaCall   which call booked it
 calls 1───< callback_requests.call_id              CallbackRequest.call
 appointments 1───< appointment_events.appointment_id   AppointmentEvent.appointment   audit trail
@@ -275,6 +348,11 @@ reminders 1───< calls.reminder_id                  CallRecord.reminder    
 ivr_sessions ──▶ patients/appointments/reminders   IvrSession.patient/.appointment/.reminder
 patients.phone_e164 (UNIQUE) = inbound caller-ID "From"  ← caller-ID match on /voice/answer
 ```
+
+There is **no waitlist table**: `WaitlistEntry` and its repository were removed because nothing
+ever created a row (cancelling an appointment used to mark every waiting entry "offered" for a
+doctor, for a feature with no UI and no endpoint). A real waitlist needs matching against the
+freed slot, notification and offer expiry — build it as its own change.
 
 Runtime links that are not FK columns: `reminders.outbound_call_uuid` ↔ `calls.call_uuid`
 (same UUID stored on both sides — `/voice/hangup` resolves the reminder through it), and

@@ -16,6 +16,20 @@ The `Patient` folder contains the following files:
 
 ---
 
+## Opening the page
+
+`patient.js` refuses to save anything without a patient id, so open the page with one:
+
+```
+Patient.html?patient_id=patient_123
+```
+
+The id is copied into the hidden `#patient-id` field on load. (It used to fall back to a hardcoded
+`patient_123`, which silently wrote rows for the wrong — usually non-existent — patient.)
+
+Requests go to `/api/medicines` on the **same origin**; the endpoint used to be hardcoded to
+`http://localhost:3000`, which broke on any other host.
+
 ## How It Works
 
 The Patient Dashboard provides several key features for managing personal health information.
@@ -26,7 +40,7 @@ The Patient Dashboard provides several key features for managing personal health
     -   A patient can click the **Add Medicine** button to dynamically generate a new form on the page.
     -   They can then enter the medicine type, dose, and a specific time for medication reminders.
     -   Each added medicine form has a **Remove** button to delete it.
-    -   After adding one or more medicines, the patient can click **Save All Medicines to Database**. This action gathers all the information from the forms and sends it to the backend server to be stored.
+    -   After adding one or more medicines, the patient can click **Save All Medicines to Database**. This action gathers all the information from the forms and sends it to the backend server to be stored. Rows are only sent when **Medicine Type** is filled in; the server rejects an empty list, more than 100 rows, or an unknown patient id (HTTP 404).
 
 3.  **Request Refill**: A simple form allows the patient to send a request for a prescription refill.
 

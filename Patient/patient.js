@@ -4,6 +4,14 @@ document.addEventListener('DOMContentLoaded', function () {
     const medicinesContainer = document.getElementById('medicines-container');
     let medicineCount = 0;
 
+    // The patient id must come from the page (e.g. Patient.html?patient_id=patient_123) or a
+    // login later. The old fallback silently posted everything to a hardcoded 'patient_123'.
+    const patientIdField = document.getElementById('patient-id');
+    const patientIdFromQuery = new URLSearchParams(window.location.search).get('patient_id');
+    if (patientIdField && patientIdFromQuery && !patientIdField.value) {
+        patientIdField.value = patientIdFromQuery;
+    }
+
     // Function to add a new medicine form
     const addMedicineForm = () => {
         medicineCount++;
@@ -13,11 +21,11 @@ document.addEventListener('DOMContentLoaded', function () {
             <h3>Medicine ${medicineCount}</h3>
             <div>
                 <label>Medicine Type:</label>
-                <input type="text" class="medicine-type" placeholder="e.g., Paracetamol">
+                <input type="text" class="medicine-type" placeholder="e.g., Paracetamol" maxlength="255">
             </div>
             <div>
                 <label>Dose:</label>
-                <input type="text" class="medicine-dose" placeholder="e.g., 500mg">
+                <input type="text" class="medicine-dose" placeholder="e.g., 500mg" maxlength="255">
             </div>
             <div>
                 <label>Medication Time:</label>
@@ -33,8 +41,8 @@ document.addEventListener('DOMContentLoaded', function () {
         const medicineEntries = medicinesContainer.querySelectorAll('.medicine-entry');
         const medicines = [];
         medicineEntries.forEach(entry => {
-            const type = entry.querySelector('.medicine-type').value;
-            const dose = entry.querySelector('.medicine-dose').value;
+            const type = entry.querySelector('.medicine-type').value.trim();
+            const dose = entry.querySelector('.medicine-dose').value.trim();
             const time = entry.querySelector('.medication-time').value;
 
             // Only add if at least the type is filled
@@ -48,12 +56,16 @@ document.addEventListener('DOMContentLoaded', function () {
             return;
         }
 
-        // A patient ID is needed. For now, we'll use a hardcoded value.
-        // In a real app, this would come from a login system.
-        const patientId = document.getElementById('patient-id').value || 'patient_123';
+        const patientId = patientIdField ? patientIdField.value.trim() : '';
+        if (!patientId) {
+            alert('Patient ID is missing. Open this page from the patient dashboard link.');
+            return;
+        }
 
         try {
-            const response = await fetch('http://localhost:3000/api/medicines', {
+            // Relative URL: the API is served from the same origin, so this works anywhere
+            // (it used to be hardcoded to http://localhost:3000).
+            const response = await fetch('/api/medicines', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -61,13 +73,14 @@ document.addEventListener('DOMContentLoaded', function () {
                 body: JSON.stringify({ medicines, patientId }),
             });
 
-            const result = await response.json();
+            const result = await response.json().catch(() => ({}));
 
             if (response.ok) {
                 medicinesContainer.innerHTML = ''; // Clear the forms after saving
+                medicineCount = 0;
                 alert('Added to the list'); // Display custom success message
             } else {
-                throw new Error(result.message || 'Failed to save data.');
+                throw new Error(result.message || `Failed to save data (HTTP ${response.status}).`);
             }
         } catch (error) {
             console.error('Error saving medicines:', error);
@@ -76,12 +89,14 @@ document.addEventListener('DOMContentLoaded', function () {
     };
 
     // Event Listeners
-    addMedicineBtn.addEventListener('click', addMedicineForm);
-    saveToDbBtn.addEventListener('click', saveMedicinesToDb);
+    if (addMedicineBtn) addMedicineBtn.addEventListener('click', addMedicineForm);
+    if (saveToDbBtn) saveToDbBtn.addEventListener('click', saveMedicinesToDb);
 
-    medicinesContainer.addEventListener('click', function (e) {
-        if (e.target && e.target.classList.contains('remove-medicine-btn')) {
-            e.target.closest('.medicine-entry').remove();
-        }
-    });
+    if (medicinesContainer) {
+        medicinesContainer.addEventListener('click', function (e) {
+            if (e.target && e.target.classList.contains('remove-medicine-btn')) {
+                e.target.closest('.medicine-entry').remove();
+            }
+        });
+    }
 });
