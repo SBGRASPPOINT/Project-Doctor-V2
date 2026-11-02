@@ -1,3 +1,10 @@
+# Local stack: PostgreSQL + the service itself.
+#   docker compose up -d --build
+# Everything the app needs comes from .env (copy .env.example → .env first).
+#
+# The `app` service is what deploy uses; `docker compose up -d postgres` still gives you just
+# the database for `./gradlew bootRun`, which is the fastest inner loop while developing.
+
 services:
   postgres:
     image: postgres:17-alpine
@@ -15,6 +22,34 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+
+  app:
+    build: .
+    container_name: appointment-service
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DB_URL: jdbc:postgresql://postgres:5432/appointment
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      PORT: 8080
+      # Required in production — ConfigValidator refuses to start without them once
+      # APP_REQUIRE_PRODUCTION_CONFIG=true.
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:8080}
+      API_TOKEN: ${API_TOKEN:-dev-token}
+      WEBHOOK_SECRET: ${WEBHOOK_SECRET:-dev-secret}
+      M1_NUMBER: ${M1_NUMBER:-+10000000000}
+      VOBIZ_AUTH_ID: ${VOBIZ_AUTH_ID:-}
+      VOBIZ_AUTH_TOKEN: ${VOBIZ_AUTH_TOKEN:-}
+      VOBIZ_API_BASE: ${VOBIZ_API_BASE:-https://api.vobiz.example.com}
+      VOBIZ_MOCK: ${VOBIZ_MOCK:-true}
+      APP_REQUIRE_PRODUCTION_CONFIG: ${APP_REQUIRE_PRODUCTION_CONFIG:-false}
+      APP_SEED_DEMO_DATA: ${APP_SEED_DEMO_DATA:-true}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
 
 volumes:
   pgdata:
