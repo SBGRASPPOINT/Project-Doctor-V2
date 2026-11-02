@@ -63,7 +63,7 @@ class ReminderServiceTest {
     void scheduleForDropsRemindersInThePastAndDisabledKinds() {
         LocalDate wed = LocalDate.of(2026, 11, 4);
         Instant appt = ist(wed, 10, 0);
-        Instant now = ist(wed, 9, 30);                  // only 30 min before the appointment
+        Instant now = ist(wed, 7, 30);                  // T-24h is past, T-2h (08:00) is still ahead
         Map<String, Instant> plan = ReminderService.scheduleFor(appt, now, true, 1440, true, 120,
                 KOLKATA, Q_START, Q_END);
         assertFalse(plan.containsKey(Reminder.KIND_T24H), "T-24h is in the past and must be dropped");

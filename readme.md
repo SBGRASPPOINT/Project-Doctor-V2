@@ -1,44 +1,86 @@
-Software Documentation
-Overview
+# Project Doctor
 
-This software is designed to collect and manage patient data, including prescriptions and associated products. The data is structured and displayed to both chemists and doctors.
+Two applications live in this repository:
 
-Features
+| Path | What it is | Stack |
+|---|---|---|
+| `appointment/` | **Call-first appointment system** on top of the Vobiz call-masking service: one public DID (M1), keypad IVR booking/reschedule/cancel, doctor schedules, automated voice reminders, ops console. | Java 25, Spring Boot 4.1, PostgreSQL 17, Gradle 9.8 |
+| `/` (root), `Admin/`, `Doctor/`, `Chemist/`, `Patient/` | **Prescription management**: a small MySQL API plus static HTML dashboards for doctors, chemists, patients and admins. | Node 20+, Express 5, MySQL 8, plain HTML/JS |
 
-Chemist View: The chemist can see which products are needed based on the prescriptions.
-
-Doctor View: The doctor can see which products are being used for each patient and the number of patients for each prescription.
-
-HTML Pages
-
-Patient Page: patient.html
-
-Doctor Page: doctor.html
-
-Chemist Page: chemist.html# My Project
+Start with [`appointment/README.md`](appointment/README.md) for the telephony side and
+[`Vobiz-Call-Masking-Plan.md`](Vobiz-Call-Masking-Plan.md) for the design reasoning behind it.
 
 ---
 
-## What's in this branch
+## Prescription app (root)
 
-1. **`appointment/`** — a call-first **appointment booking system** built on the Vobiz call-masking service (plan in `Vobiz-Call-Masking-Plan.md`): **Java 25 (LTS) + Spring Boot 4.1 + Gradle 9.8 + PostgreSQL + Lombok + Log4j2**. Patients dial the single public DID (M1) and book / reschedule / cancel by keypad IVR; callers and staff only ever see M1 (masking preserved); automated voice reminder calls (T-24h, T-2h) plus immediate change-notification calls; voicemail → callback queue and click-to-call from the original masking service keep working. Persistence uses **Spring Data JPA** (`@Entity` classes generate the PostgreSQL schema via Hibernate — no `schema.sql`) plus **JDBC** (`JdbcTemplate`) for native list/stats queries. Setup: `cd appointment && docker compose up -d && ./gradlew bootRun` — full details in `appointment/README.md`.
-2. **Database indexes in `prescription.sql`** — secondary indexes on the entity columns most likely to be searched, filtered or joined on (details below).
+### What each page actually does
 
-## New project in this repo: `appointment/`
+| Page | Script | Behaviour |
+|---|---|---|
+| `Patient/Patient.html` | `patient.js` | Adds medicine rows and saves them via `POST /api/medicines`. Needs a patient id: open it as `Patient.html?patient_id=patient_123`. |
+| `Doctor/Doctor.html` | none | A form skeleton for entering patient info and a prescription. It is **not wired to the API yet** — there is no `Doctor.js`. |
+| `Chemist/Chemist.html` | none | A form skeleton for viewing prescriptions and inventory. Not wired to the API yet. |
+| `Admin/Admin.html` | `Admin.js` | Read-only viewer for the five tables. Requires the admin API key (prompted on first use). |
 
-The call-masking service (one public Vobiz DID M1 bridged to hidden agent numbers, call log,
-voicemail fallback, click-to-call callbacks) extended into an appointment system: IVR self-service
-booking on the inbound call, doctor schedules/availability, reminder engine over outbound voice
-calls, and an ops console. See `appointment/README.md` for setup (`docker compose up -d` then `./gradlew bootRun`).
+File names are case-sensitive on Linux and on GitHub Pages: `Patient/Patient.html`, not
+`patient.html`.
 
-## Database Indexes (prescription.sql)
+### Run it
 
-Secondary indexes were added on the columns most likely to be searched, filtered or joined on, so lookups stay fast as the tables grow:
+```bash
+npm install
 
-- `Patients`: `idx_patients_name (name)` — patient search by name
-- `Doctors`: `idx_doctors_name (name)`, `idx_doctors_specialization (specialization)`
-- `Inventory`: `idx_inventory_quantity (quantity)` — low-stock checks (`item_name` is already UNIQUE-indexed)
-- `Prescriptions`: `idx_prescriptions_patient (patient_id)`, `idx_prescriptions_doctor (doctor_id)`, `idx_prescriptions_medication (medication_name)`, `idx_prescriptions_status_date (status, date_prescribed)`
-- `PatientMedicines`: `idx_patient_medicines_patient (patient_id)`, `idx_patient_medicines_type (medicine_type)`
+# configuration (all optional for a local MySQL; see .env.example)
+export DB_HOST=localhost DB_USER=root DB_PASSWORD=secret DB_NAME=prescription_app
+export API_KEY=change-me          # required by /api/admin/*; empty = open (development only)
+export ALLOWED_ORIGINS=           # comma-separated allow-list; empty = same-origin only
 
-These B-tree indexes cover exact-match, prefix (`LIKE 'abc%'`) and `ORDER BY` queries. For substring search (`LIKE '%abc%'`) on large tables, use a FULLTEXT index instead (see the note at the top of `prescription.sql`).
+npm start                         # http://localhost:3000
+curl localhost:3000/api/health    # {"status":"ok"} when the database answers
+```
+
+Create the schema first with [`prescription.sql`](prescription.sql) — read the warning at the top:
+it **drops** the five tables it creates.
+
+### API
+
+| Endpoint | Auth | Purpose |
+|---|---|---|
+| `GET /api/health` | – | process + database liveness |
+| `POST /api/medicines` | – | `{patientId, medicines:[{type,dose,time}]}` → inserts `PatientMedicines` rows |
+| `GET /api/admin/{patients,doctors,prescriptions,patientmedicines,inventory}` | `x-api-key` | paginated table dump: `{items, count, limit, offset}` (`?limit` ≤ 500, `?offset`) |
+
+### Configuration
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `PORT` | `3000` | HTTP port |
+| `DB_HOST` / `DB_PORT` | `localhost` / `3306` | MySQL host/port |
+| `DB_USER` / `DB_PASSWORD` / `DB_NAME` | `root` / – / `prescription_app` | MySQL credentials (pooled, 10 connections by default) |
+| `DB_POOL_SIZE` | `10` | Pool size |
+| `API_KEY` | empty | Required as `x-api-key` for `/api/admin/*`. Empty = unauthenticated, logs a warning. |
+| `ALLOWED_ORIGINS` | empty | Comma-separated CORS allow-list. Empty = same-origin only. |
+
+---
+
+## Tests and CI
+
+```bash
+npm test                      # node --check on the JavaScript files
+cd appointment && ./gradlew test
+```
+
+`.github/workflows/ci.yml` builds and tests the Java service, boots it against a real PostgreSQL
+service container, and syntax-checks every JavaScript file.
+
+## Repository layout notes
+
+- `prescription.sql` is MySQL DDL for the prescription app (it drops and recreates five tables).
+- `gemini.md` records the project's original "HTML + JavaScript only" convention; the committed
+  CSS/Java under `appointment/` is the documented exception.
+- `.gitignore` covers `node_modules`, build outputs and `.env` files; there is no `.env` committed.
+
+## License
+
+ISC — see [`LICENSE`](LICENSE).

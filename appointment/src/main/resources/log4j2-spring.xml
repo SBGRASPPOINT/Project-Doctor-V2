@@ -6,7 +6,8 @@
         </Console>
     </Appenders>
     <Loggers>
-        <Logger name="com.vobiz.masking" level="debug" additivity="false">
+        <!-- LOG_LEVEL env var; INFO in production, DEBUG locally (DEBUG logs request flow detail). -->
+        <Logger name="com.vobiz.masking" level="${env:LOG_LEVEL:-info}" additivity="false">
             <AppenderRef ref="Console"/>
         </Logger>
         <Root level="info">

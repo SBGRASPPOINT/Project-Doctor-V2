@@ -18,6 +18,7 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
+import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 
 import java.time.LocalTime;
@@ -31,6 +32,7 @@ import java.util.Map;
  * so no SQL schema file is needed anywhere.
  */
 @Component
+@Order(1)
 public class DataSeeder implements ApplicationRunner {
 
     private static final Logger log = LogManager.getLogger(DataSeeder.class);
@@ -123,10 +125,12 @@ public class DataSeeder implements ApplicationRunner {
     private final DoctorScheduleRepository schedules;
     private final MessageTemplateRepository templates;
     private final PatientRepository patients;
+    private final AppProperties app;
 
     public DataSeeder(SettingRepository settings, AgentRepository agents, DepartmentRepository departments,
                       DoctorRepository doctors, DoctorScheduleRepository schedules,
-                      MessageTemplateRepository templates, PatientRepository patients) {
+                      MessageTemplateRepository templates, PatientRepository patients, AppProperties app) {
+        this.app = app;
         this.settings = settings;
         this.agents = agents;
         this.departments = departments;
@@ -151,11 +155,19 @@ public class DataSeeder implements ApplicationRunner {
                 templates.save(t);
             }
         });
-        seedAgent("Agent N2", "+15551230001", 1);
-        seedAgent("Agent N3", "+15551230002", 2);
-        seedDemoClinic();
-        seedPatient("Sannidh", "+919876543210");
-        log.info("Seed check done: {} settings, {} templates, demo agents/clinic/patient inserted only if missing",
+        // Demo rows (fake agents RoutingService would actually dial, a fake doctor and patient)
+        // must never reach a live database: gated behind app.seed-demo-data (APP_SEED_DEMO_DATA).
+        if (app.isSeedDemoData()) {
+            seedAgent("Agent N2", "+15551230001", 1);
+            seedAgent("Agent N3", "+15551230002", 2);
+            seedDemoClinic();
+            seedPatient("Sannidh", "+919876543210");
+            log.info("Demo data seeded (app.seed-demo-data=true): 2 agents, 1 doctor, 1 patient");
+        } else {
+            log.info("Demo data skipped (app.seed-demo-data=false). "
+                    + "Register real agent numbers in the ops console → Agents.");
+        }
+        log.info("Seed check done: {} settings, {} templates (inserted only if missing)",
                 DEFAULT_SETTINGS.size(), TEMPLATES_EN.size());
     }
 
@@ -181,17 +193,17 @@ public class DataSeeder implements ApplicationRunner {
             return departments.save(d);
         });
         if (doctors.findAll().stream().noneMatch(d -> "Dr. Sharma".equalsIgnoreCase(d.getName()))) {
-            Doctor doc = new Doctor();
+            final Doctor doc = new Doctor();
             doc.setName("Dr. Sharma");
             doc.setSpecialization("General Practitioner");
             doc.setDepartmentId(dep.getId());
             doc.setSlotMinutes(15);
             doc.setActive(true);
             agents.findByPhoneE164("+15551230001").ifPresent(a -> doc.setAgentId(a.getId()));
-            doc = doctors.save(doc);
+            Doctor saved = doctors.save(doc);
             for (int dow = 1; dow <= 5; dow++) {   // Mon–Fri 10:00–13:00
                 DoctorSchedule s = new DoctorSchedule();
-                s.setDoctorId(doc.getId());
+                s.setDoctorId(saved.getId());
                 s.setDayOfWeek(dow);
                 s.setStartTime(LocalTime.of(10, 0));
                 s.setEndTime(LocalTime.of(13, 0));

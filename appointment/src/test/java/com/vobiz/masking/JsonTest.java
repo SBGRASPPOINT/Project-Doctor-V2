@@ -45,6 +45,10 @@ class JsonTest {
         assertEquals(2.5, arr.get(1));
         assertEquals(-3L, arr.get(2));
         assertEquals("x\ny", m.get("c"));
+        // Regression guard: an integral literal must stay a Long, not widen to Double just
+        // because the sibling branch of the parser's ternary is a double.
+        assertTrue(arr.get(0) instanceof Long, "integral literals must parse as Long, got " + arr.get(0).getClass());
+        assertTrue(arr.get(1) instanceof Double, "decimal literals must parse as Double");
     }
 
     @Test

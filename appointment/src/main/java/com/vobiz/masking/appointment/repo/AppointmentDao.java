@@ -6,6 +6,7 @@ import org.springframework.jdbc.core.RowMapper;
 
 import java.sql.Timestamp;
 import java.time.Instant;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -55,17 +56,22 @@ public class AppointmentDao {
         return jdbc.query(sql.toString(), ROW_MAPPER, params.toArray());
     }
 
-    /** Dashboard counters (native FILTER aggregates). */
-    public Map<String, Object> stats() {
+    /**
+     * Dashboard counters (native FILTER aggregates). "today"/"week" are computed in the clinic
+     * timezone: {@code current_date} resolved in the DB session zone (UTC), so the counters were
+     * off by the clinic's offset (5.5 h for Asia/Kolkata) every day.
+     */
+    public Map<String, Object> stats(ZoneId zone) {
         String sql = "SELECT count(*) AS total, "
-                + "count(*) FILTER (WHERE starts_at >= current_date AND starts_at < (current_date + 1)) AS today, "
-                + "count(*) FILTER (WHERE starts_at >= date_trunc('week', now())) AS week, "
+                + "count(*) FILTER (WHERE starts_at >= (now() AT TIME ZONE ?)::date "
+                + "  AND starts_at < ((now() AT TIME ZONE ?)::date + 1)) AS today, "
+                + "count(*) FILTER (WHERE starts_at >= date_trunc('week', now() AT TIME ZONE ?)) AS week, "
                 + "count(*) FILTER (WHERE status = 'confirmed') AS confirmed, "
                 + "count(*) FILTER (WHERE status = 'cancelled') AS cancelled, "
                 + "count(*) FILTER (WHERE status = 'no_show') AS no_show, "
                 + "count(*) FILTER (WHERE source = 'ivr_call') AS by_ivr "
                 + "FROM appointments";
-        Map<String, Object> row = jdbc.queryForMap(sql);
+        Map<String, Object> row = jdbc.queryForMap(sql, zone.getId(), zone.getId(), zone.getId());
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("appointments_total", lng(row.get("total")));
         m.put("appointments_today", lng(row.get("today")));

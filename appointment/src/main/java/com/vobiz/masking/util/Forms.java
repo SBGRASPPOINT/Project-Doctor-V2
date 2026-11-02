@@ -20,7 +20,12 @@ public final class Forms {
             int i = pair.indexOf('=');
             String k = i < 0 ? pair : pair.substring(0, i);
             String v = i < 0 ? "" : pair.substring(i + 1);
-            m.put(URLDecoder.decode(k, StandardCharsets.UTF_8), URLDecoder.decode(v, StandardCharsets.UTF_8));
+            try {
+                m.put(URLDecoder.decode(k, StandardCharsets.UTF_8), URLDecoder.decode(v, StandardCharsets.UTF_8));
+            } catch (IllegalArgumentException e) {
+                // A bad %-escape used to escape the dispatcher's catch block and become a 500.
+                throw new IllegalArgumentException("Malformed form/query encoding near '" + pair + "'", e);
+            }
         }
         return m;
     }

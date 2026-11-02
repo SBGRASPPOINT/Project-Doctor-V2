@@ -9,6 +9,13 @@
 --   * FK columns are indexed explicitly even though InnoDB auto-indexes them, so the
 --     indexes exist regardless of engine/constraint behaviour.
 
+-- ############################################################################
+-- WARNING: this script DESTROYS DATA. The DROP statements below remove all five
+-- tables (and every prescription, patient and stock row in them) before recreating
+-- them. Never point it at a database whose contents you care about; for an existing
+-- database use the ALTER/CREATE INDEX statements instead of re-running this file.
+-- ############################################################################
+
 -- Drop tables if they exist to ensure a clean setup.
 DROP TABLE IF EXISTS PatientMedicines;
 DROP TABLE IF EXISTS Prescriptions;

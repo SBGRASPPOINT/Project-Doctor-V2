@@ -1,25 +1,29 @@
 {
-  "name": "website",
+  "name": "project-doctor",
   "version": "1.0.0",
-  "description": "Software Documentation\r Overview",
-  "main": "index.js",
+  "description": "Prescription management (MySQL API + HTML dashboards) and the Vobiz call-first appointment service in appointment/",
+  "main": "server.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node server.js",
+    "test": "node --check server.js && node --check Admin/Admin.js && node --check Patient/patient.js"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/SBGRASPPOINT/Project-Doctor-V1.git"
+    "url": "git+https://github.com/SBGRASPPOINT/Project-Doctor-V2.git"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "bugs": {
-    "url": "https://github.com/SBGRASPPOINT/Project-Doctor-V1/issues"
+    "url": "https://github.com/SBGRASPPOINT/Project-Doctor-V2/issues"
   },
-  "homepage": "https://github.com/SBGRASPPOINT/Project-Doctor-V1#readme",
+  "homepage": "https://github.com/SBGRASPPOINT/Project-Doctor-V2#readme",
   "dependencies": {
     "cors": "^2.8.5",
     "express": "^5.1.0",
     "mysql2": "^3.14.5"
+  },
+  "engines": {
+    "node": ">=20"
   }
 }

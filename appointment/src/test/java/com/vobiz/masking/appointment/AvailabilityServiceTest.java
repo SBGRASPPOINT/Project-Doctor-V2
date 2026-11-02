@@ -56,7 +56,8 @@ class AvailabilityServiceTest {
     @Test
     void existingAppointmentBlocksOnlyItsOwnSlot() {
         LocalDate tue = LocalDate.of(2026, 11, 3);
-        List<Instant[]> busy = List.of(new Instant[]{at(tue, 10, 15), at(tue, 10, 30)});
+        List<Instant[]> busy = java.util.Collections.singletonList(
+                new Instant[]{at(tue, 10, 15), at(tue, 10, 30)});
         List<Slot> slots = AvailabilityService.generateDaySlots(
                 tue, KOLKATA,
                 List.of(new Template(LocalTime.of(10, 0), LocalTime.of(11, 0), 15)),
@@ -69,7 +70,8 @@ class AvailabilityServiceTest {
     @Test
     void timeOffBlockExcludesOverlappingSlots() {
         LocalDate tue = LocalDate.of(2026, 11, 3);
-        List<Instant[]> timeOff = List.of(new Instant[]{at(tue, 10, 30), at(tue, 11, 30)});
+        List<Instant[]> timeOff = java.util.Collections.singletonList(
+                new Instant[]{at(tue, 10, 30), at(tue, 11, 30)});
         List<Slot> slots = AvailabilityService.generateDaySlots(
                 tue, KOLKATA,
                 List.of(new Template(LocalTime.of(10, 0), LocalTime.of(12, 0), 15)),

@@ -24,8 +24,15 @@ The admin dashboard is a read-only interface for viewing the contents of the app
 2.  The page displays separate sections for each database table (Patients, Doctors, Inventory, etc.).
 3.  The user clicks a **Fetch** button within a section.
 4.  This action triggers a JavaScript function that sends a request to the backend server's API.
-5.  The server queries the corresponding database table and returns the data as a JSON array.
-6.  The JavaScript receives this data, dynamically builds an HTML table, and injects it into the page for the user to see.
+5.  The request carries an `x-api-key` header. The key is prompted for once per browser session
+    and kept in `sessionStorage`; it is **not** stored in this repository. On the server it is the
+    `API_KEY` environment variable (empty = unauthenticated, development only).
+6.  The server returns `{ items, count, limit, offset }` — at most 100 rows per fetch
+    (`?limit=`, `?offset=` are supported, `limit` is capped at 500).
+7.  The JavaScript builds an HTML table and injects it into the page for the user to see. Cell
+    values are written with `textContent`, so database content cannot inject markup.
+
+If the key is missing or wrong the page shows "Not authorised" instead of data.
 
 ---
 

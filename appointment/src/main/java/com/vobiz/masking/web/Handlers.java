@@ -109,7 +109,9 @@ public class Handlers {
                 case "/voice/recording-done" -> callFlow.voiceRecordingDone(params);
                 case "/voice/hangup" -> {
                     HttpResult r = callFlow.voiceHangup(params);
-                    reminders.onOutboundHangup(Forms.firstNonBlank(params, "CallUUID", "call_uuid"));
+                    // CallDuration lets the reminder retry policy tell "heard it" from "unanswered".
+                    reminders.onOutboundHangup(Forms.firstNonBlank(params, "CallUUID", "call_uuid"),
+                            parseIntOrNull(Forms.firstNonBlank(params, "CallDuration", "Duration")));
                     yield r;
                 }
                 case "/voice/outbound-answer" -> callFlow.voiceOutboundAnswer(params);
@@ -354,8 +356,9 @@ public class Handlers {
         } catch (ApiException e) {
             return error(e.getStatus(), e.getMessage());
         } catch (Exception e) {
+            // Log the detail, never return it: driver/SQL text must not reach the caller.
             log.error("API {} {} failed", method, path, e);
-            return error(500, "Internal error: " + e.getMessage());
+            return error(500, "Internal error");
         }
     }
 
@@ -373,15 +376,15 @@ public class Handlers {
     public HttpResult stats() {
         Map<String, Object> m = new LinkedHashMap<>();
         m.putAll(agentService.stats());
-        m.putAll(callDao.stats());
+        m.putAll(callDao.stats(settings.clinicZone()));
         m.putAll(callbackDao.stats());
         return ok(m);
     }
 
     public HttpResult appointmentStats() {
         Map<String, Object> m = new LinkedHashMap<>();
-        m.putAll(appointmentDao.stats());
-        m.putAll(reminderDao.stats());
+        m.putAll(appointmentDao.stats(settings.clinicZone()));
+        m.putAll(reminderDao.stats(settings.clinicZone()));
         return ok(m);
     }
 
@@ -490,6 +493,14 @@ public class Handlers {
             return Long.parseLong(s.trim().replaceAll("/+$", ""));
         } catch (Exception e) {
             throw new ApiException(400, "Invalid id: " + s);
+        }
+    }
+
+    private static Integer parseIntOrNull(String s) {
+        try {
+            return (s == null || s.isBlank()) ? null : Integer.valueOf(s.trim());
+        } catch (NumberFormatException e) {
+            return null;
         }
     }
 

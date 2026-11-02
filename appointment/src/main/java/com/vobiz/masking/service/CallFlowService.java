@@ -5,6 +5,7 @@ import com.vobiz.masking.model.CallRecord;
 import com.vobiz.masking.model.CallbackRequest;
 import com.vobiz.masking.repo.CallDao;
 import com.vobiz.masking.repo.CallbackDao;
+import com.vobiz.masking.security.WebhookSigner;
 import com.vobiz.masking.util.Forms;
 import com.vobiz.masking.web.HttpResult;
 import com.vobiz.masking.xml.VobizXml;
@@ -34,15 +35,18 @@ public class CallFlowService {
     private final RoutingService routing;
     private final String publicBaseUrl;
     private final String defaultM1;
+    private final WebhookSigner signer;
 
     public CallFlowService(CallDao callDao, CallbackDao callbackDao, SettingsService settings,
-                           RoutingService routing, String publicBaseUrl, String defaultM1) {
+                           RoutingService routing, String publicBaseUrl, String defaultM1,
+                           WebhookSigner signer) {
         this.callDao = callDao;
         this.callbackDao = callbackDao;
         this.settings = settings;
         this.routing = routing;
         this.publicBaseUrl = publicBaseUrl;
         this.defaultM1 = defaultM1;
+        this.signer = signer;
     }
 
     /** POST /voice/answer — a caller dialled M1. Log the call, then return the routing XML. */
@@ -79,14 +83,14 @@ public class CallFlowService {
         } else if ("sequential".equals(mode)) {
             Agent first = agents.get(0);
             callDao.appendDialedAgent(callUuid, first.getId());
-            String action = publicBaseUrl + "/voice/dial-step?call_uuid=" + enc(callUuid) + "&step=1";
+            String action = signer.sign(publicBaseUrl + "/voice/dial-step?call_uuid=" + enc(callUuid) + "&step=1");
             inner.append(VobizXml.dial(List.of(first.getPhoneE164()), m1, ringTimeout, action, true));
             inner.append(fallback);
         } else {
             for (Agent a : agents) callDao.appendDialedAgent(callUuid, a.getId());
             List<String> phones = agents.stream().map(Agent::getPhoneE164).toList();
             // redirect=false: if the Dial fails, execution continues into the voicemail fallback below.
-            inner.append(VobizXml.dial(phones, m1, ringTimeout, publicBaseUrl + "/voice/dial-result", false));
+            inner.append(VobizXml.dial(phones, m1, ringTimeout, signer.sign(publicBaseUrl + "/voice/dial-result"), false));
             inner.append(fallback);
         }
         return VobizXml.response(inner.toString());
@@ -128,7 +132,7 @@ public class CallFlowService {
             Agent next = agents.get(step);
             callDao.appendDialedAgent(callUuid, next.getId());
             String m1 = settings.m1(defaultM1);
-            String action = publicBaseUrl + "/voice/dial-step?call_uuid=" + enc(callUuid) + "&step=" + (step + 1);
+            String action = signer.sign(publicBaseUrl + "/voice/dial-step?call_uuid=" + enc(callUuid) + "&step=" + (step + 1));
             String inner = VobizXml.dial(List.of(next.getPhoneE164()), m1, settings.ringTimeoutSec(), action, true)
                     + voicemailFallback();
             return HttpResult.xml(200, VobizXml.response(inner));
@@ -185,7 +189,7 @@ public class CallFlowService {
     private String voicemailFallback() {
         return VobizXml.voicemailFallback(
                 settings.greetingText(), settings.closingText(),
-                publicBaseUrl + "/voice/recording-done",
+                signer.sign(publicBaseUrl + "/voice/recording-done"),
                 settings.voicemailMaxSec(), settings.silenceTimeoutSec());
     }
 

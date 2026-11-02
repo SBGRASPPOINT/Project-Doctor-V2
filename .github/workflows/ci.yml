@@ -1,0 +1,140 @@
+name: CI
+
+# Nothing ran the tests before this workflow existed, which is how a non-compiling module and
+# two always-400 console options survived. Keep it fast: one Java job, one JS syntax job.
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  java:
+    name: appointment-service (build + test)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: appointment
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "25"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Compile + unit tests
+        shell: bash
+        run: |
+          set -o pipefail
+          ./gradlew --no-daemon build --stacktrace 2>&1 | tee gradle-build.log
+          status=$?
+          if [ "$status" -ne 0 ]; then
+            # Surface compiler/test errors as annotations: they are visible on the PR and in the
+            # checks API without downloading the (large) raw job log.
+            grep -E "error:|symbol:|location:|FAILED|Caused by:" gradle-build.log \
+              | head -40 | while IFS= read -r line; do echo "::error title=Gradle::$line"; done
+          fi
+          exit "$status"
+
+      # Failing tests are invisible in the raw log from some networks, so turn the JUnit XML
+      # into annotations: they show up on the PR and via the checks API.
+      - name: Annotate failing tests
+        if: failure()
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import glob, xml.etree.ElementTree as ET
+          n = 0
+          for f in sorted(glob.glob("build/test-results/test/TEST-*.xml")):
+              for tc in ET.parse(f).getroot().iter("testcase"):
+                  for kind in ("failure", "error"):
+                      node = tc.find(kind)
+                      if node is None:
+                          continue
+                      msg = (node.get("message") or node.get("type") or kind).strip()
+                      msg = " ".join(msg.split())[:400].replace("%", "%25").replace("\r", "").replace("\n", " ")
+                      name = f"{tc.get('classname')}.{tc.get('name')}"
+                      print(f"::error title={name}::{msg}")
+                      n += 1
+                      break
+          print(f"annotated {n} failing test(s)")
+          PY
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports
+          path: |
+            appointment/build/reports/tests/
+            appointment/build/test-results/
+          retention-days: 7
+
+  postgres-integration:
+    name: schema boots against PostgreSQL
+    runs-on: ubuntu-latest
+    needs: java
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: appointment
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres -d appointment"
+          --health-interval 5s --health-timeout 3s --health-retries 10
+    defaults:
+      run:
+        working-directory: appointment
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "25"
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      # Boots the real app: Hibernate creates the schema from the @Entity classes, the seeder
+      # runs, and the context only becomes healthy if the mappings and data source are valid.
+      - name: Boot with a real database and probe /health
+        env:
+          DB_URL: jdbc:postgresql://localhost:5432/appointment
+          DB_USER: postgres
+          DB_PASSWORD: postgres
+          API_TOKEN: ci-token
+          WEBHOOK_SECRET: ci-secret
+        run: |
+          ./gradlew --no-daemon bootRun --args='--server.port=8080' &
+          for i in $(seq 1 60); do
+            if curl -fsS http://localhost:8080/api/health > /dev/null; then echo "health OK"; exit 0; fi
+            sleep 2
+          done
+          echo "service did not become healthy"; exit 1
+
+  javascript:
+    name: legacy pages (syntax check)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: node --check on every JS file
+        run: |
+          git ls-files '*.js' | while read -r f; do
+            echo "checking $f"
+            node --check "$f"
+          done

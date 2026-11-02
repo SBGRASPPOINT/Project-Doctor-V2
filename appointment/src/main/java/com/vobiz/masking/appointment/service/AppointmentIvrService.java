@@ -11,6 +11,7 @@ import com.vobiz.masking.appointment.repo.DoctorRepository;
 import com.vobiz.masking.appointment.repo.IvrSessionRepository;
 import com.vobiz.masking.model.CallRecord;
 import com.vobiz.masking.repo.CallDao;
+import com.vobiz.masking.security.WebhookSigner;
 import com.vobiz.masking.service.CallFlowService;
 import com.vobiz.masking.service.SettingsService;
 import com.vobiz.masking.util.ApiException;
@@ -64,12 +65,14 @@ public class AppointmentIvrService {
     private final CallFlowService callFlow;
     private final CallDao callDao;
     private final String publicBaseUrl;
+    private final WebhookSigner signer;
 
     public AppointmentIvrService(IvrSessionRepository sessions, PatientDirectoryService patients,
                                  DepartmentRepository departments, DoctorRepository doctors,
                                  AvailabilityService availability, AppointmentService appointments,
                                  ReminderService reminders, SettingsService settings, PromptService prompts,
-                                 CallFlowService callFlow, CallDao callDao, String publicBaseUrl) {
+                                 CallFlowService callFlow, CallDao callDao, String publicBaseUrl,
+                                 WebhookSigner signer) {
         this.sessions = sessions;
         this.patients = patients;
         this.departments = departments;
@@ -81,6 +84,7 @@ public class AppointmentIvrService {
         this.prompts = prompts;
         this.callFlow = callFlow;
         this.callDao = callDao;
+        this.signer = signer;
         this.publicBaseUrl = publicBaseUrl.endsWith("/")
                 ? publicBaseUrl.substring(0, publicBaseUrl.length() - 1) : publicBaseUrl;
     }
@@ -242,6 +246,7 @@ public class AppointmentIvrService {
         try {
             if ("reschedule".equals(s.getIntent())) {
                 Long apptId = parseLong((String) s.collected().get("appointment_id"));
+                if (apptId == null) return human(callUuid, s);   // lost session state → reception, not an NPE
                 Appointment a = appointments.reschedule(apptId, startsAt, "patient_ivr");
                 s.setAppointmentId(a.getId());
                 sessions.save(s);
@@ -289,7 +294,8 @@ public class AppointmentIvrService {
         List<String> ids = stringList(s.collected().get("appointment_ids"));
         int idx = parseDigit(digit);
         if (idx < 1 || idx > ids.size()) {
-            return prompt(s, lang, "ivr_pick_appointment", Map.of("list", ""), action(callUuid, "/voice/ivr/reschedule"));
+            return prompt(s, lang, "ivr_pick_appointment", Map.of("list", renumber(ids)),
+                    action(callUuid, "/voice/ivr/reschedule"));
         }
         Long apptId = Long.parseLong(ids.get(idx - 1));
         Appointment a = appointments.get(apptId);
@@ -327,7 +333,8 @@ public class AppointmentIvrService {
         List<String> ids = stringList(s.collected().get("appointment_ids"));
         int idx = parseDigit(digit);
         if (idx < 1 || idx > ids.size()) {
-            return prompt(s, lang, "ivr_pick_appointment", Map.of("list", ""), action(callUuid, "/voice/ivr/cancel"));
+            return prompt(s, lang, "ivr_pick_appointment", Map.of("list", renumber(ids)),
+                    action(callUuid, "/voice/ivr/cancel"));
         }
         Long apptId = Long.parseLong(ids.get(idx - 1));
         Appointment a = appointments.get(apptId);
@@ -353,7 +360,7 @@ public class AppointmentIvrService {
         int n = (int) s.collected().getOrDefault("no_input", 0) + 1;
         s.collected().put("no_input", n);
         hop(s);
-        if (n >= 2 || overCap(s)) return human(callUuid, s);
+        if (shouldEscapeToHuman(n, s.getHops(), settings.ivrMaxHops())) return human(callUuid, s);
         sessions.save(s);
         return HttpResult.xml(200, mainMenuXml(callUuid, patientOf(s)));
     }
@@ -401,8 +408,8 @@ public class AppointmentIvrService {
                 "time", timeLabel(a.getStartsAt()),
                 "ref", a.getReferenceCode() == null ? "" : a.getReferenceCode(),
                 "reason", r.getErrorText() == null ? "" : r.getErrorText());
-        String action = publicBaseUrl + "/voice/reminder-response?reminder_id=" + reminderId
-                + "&call_uuid=" + enc(callUuid);
+        String action = signer.sign(publicBaseUrl + "/voice/reminder-response?reminder_id=" + reminderId
+                + "&call_uuid=" + enc(callUuid));
         return HttpResult.xml(200, VobizXml.response(
                 VobizXml.gather(VobizXml.speak(prompts.render(key, patient.getPreferredLanguage(), vars)), action, 1, 10)
                         + VobizXml.redirect(noInputUrl(callUuid))));
@@ -416,19 +423,29 @@ public class AppointmentIvrService {
         IvrSession s = session(callUuid);
         String lang = langOf(s);
         String digit = p.getOrDefault("Digits", "");
-        Reminder r = reminders.markAnswered(reminderId, digit);
+        // The self-cancel cut-off is checked BEFORE the response is recorded, so a refusal is not
+        // logged as "patient cancelled" (and cannot happen here when the main IVR would refuse too).
+        if ("3".equals(digit)) {
+            Appointment a = appointments.get(reminders.get(reminderId).getAppointmentId());
+            long hoursLeft = java.time.Duration.between(Instant.now(), a.getStartsAt()).toHours();
+            if (hoursLeft < settings.allowSelfCancelHours()) {
+                reminders.markAnswered(reminderId, "0");
+                return HttpResult.xml(200, VobizXml.response(
+                        VobizXml.speak(prompts.render("ivr_cancel_too_late", lang, Map.of()))
+                                + VobizXml.redirect(humanUrl(callUuid))));
+            }
+            reminders.markAnswered(reminderId, digit);
+            appointments.cancel(a.getId(), "Cancelled by patient on reminder call", "patient_ivr");
+            return HttpResult.xml(200, VobizXml.response(
+                    VobizXml.speak(prompts.render("ivr_cancel_done", lang, Map.of("ref", a.getReferenceCode() == null ? "" : a.getReferenceCode())))
+                            + VobizXml.hangup()));
+        }
+        reminders.markAnswered(reminderId, digit);
         log.info("Reminder #{} answered with digit {}", reminderId, digit);
         switch (digit) {
             case "1" -> {
                 return HttpResult.xml(200, VobizXml.response(
                         VobizXml.speak(prompts.render("reminder_thanks", lang, Map.of())) + VobizXml.hangup()));
-            }
-            case "3" -> {
-                Appointment a = appointments.get(r.getAppointmentId());
-                appointments.cancel(a.getId(), "Cancelled by patient on reminder call", "patient_ivr");
-                return HttpResult.xml(200, VobizXml.response(
-                        VobizXml.speak(prompts.render("ivr_cancel_done", lang, Map.of("ref", a.getReferenceCode() == null ? "" : a.getReferenceCode())))
-                                + VobizXml.hangup()));
             }
             case "2" -> {
                 return HttpResult.xml(200, VobizXml.response(
@@ -532,7 +549,7 @@ public class AppointmentIvrService {
     }
 
     private boolean overCap(IvrSession s) {
-        return s.getHops() > settings.ivrMaxHops();
+        return shouldEscapeToHuman(0, s.getHops(), settings.ivrMaxHops());
     }
 
     /** Pure: after two no-inputs, or past the hop cap, escape to the human path. */
@@ -577,7 +594,7 @@ public class AppointmentIvrService {
     }
 
     private String action(String callUuid, String path) {
-        return publicBaseUrl + path + "?call_uuid=" + enc(callUuid);
+        return signer.sign(publicBaseUrl + path + "?call_uuid=" + enc(callUuid));
     }
 
     private String noInputUrl(String callUuid) {
@@ -606,6 +623,25 @@ public class AppointmentIvrService {
         } catch (Exception e) {
             return null;
         }
+    }
+
+    /** Re-speaks the appointment list that was offered (ids were stored in the session). */
+    private String renumber(List<String> appointmentIds) {
+        StringBuilder sb = new StringBuilder();
+        int i = 1;
+        for (String raw : appointmentIds) {
+            Long id = parseLong(raw);
+            if (id == null) continue;
+            try {
+                Appointment a = appointments.get(id);
+                sb.append(i++).append(". ").append(a.getReferenceCode()).append(", ")
+                        .append(doctorName(a)).append(", ").append(label(a)).append(". ");
+            } catch (ApiException e) {
+                // Stale id (appointment deleted): skip it rather than end the call with an error.
+                log.warn("Skipping missing appointment {} while re-speaking the menu", id);
+            }
+        }
+        return sb.toString();
     }
 
     private static List<String> ids(List<Appointment> appts) {

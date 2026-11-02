@@ -1,5 +1,6 @@
 package com.vobiz.masking.model;
 
+import com.vobiz.masking.appointment.model.Reminder;
 import com.vobiz.masking.util.Json.Jsonable;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -10,6 +11,9 @@ import jakarta.persistence.Index;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.Table;
 import jakarta.persistence.Transient;
+import jakarta.persistence.ManyToOne;
+import jakarta.persistence.JoinColumn;
+import jakarta.persistence.FetchType;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;

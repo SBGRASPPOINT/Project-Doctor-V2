@@ -10,6 +10,7 @@ import com.vobiz.masking.appointment.repo.PatientRepository;
 import com.vobiz.masking.appointment.repo.ReminderRepository;
 import com.vobiz.masking.config.AppProperties;
 import com.vobiz.masking.repo.CallDao;
+import com.vobiz.masking.security.WebhookSigner;
 import com.vobiz.masking.service.SettingsService;
 import com.vobiz.masking.util.ApiException;
 import com.vobiz.masking.vobiz.VobizClient;
@@ -54,10 +55,13 @@ public class ReminderService {
     private final VobizClient vobiz;
     private final SettingsService settings;
     private final AppProperties app;
+    private final WebhookSigner signer;
+    private final SmsService sms;
 
     public ReminderService(ReminderRepository reminderRepo, AppointmentRepository appointmentRepo,
                            AppointmentEventRepository eventRepo, PatientRepository patientRepo,
-                           CallDao callDao, VobizClient vobiz, SettingsService settings, AppProperties app) {
+                           CallDao callDao, VobizClient vobiz, SettingsService settings, AppProperties app,
+                           WebhookSigner signer, SmsService sms) {
         this.reminderRepo = reminderRepo;
         this.appointmentRepo = appointmentRepo;
         this.eventRepo = eventRepo;
@@ -66,6 +70,8 @@ public class ReminderService {
         this.vobiz = vobiz;
         this.settings = settings;
         this.app = app;
+        this.signer = signer;
+        this.sms = sms;
     }
 
     // ---------- scheduling ----------
@@ -162,8 +168,9 @@ public class ReminderService {
         }
         String m1 = settings.m1(app.getDefaultM1Number());
         String base = trimSlash(app.getPublicBaseUrl());
-        String answerUrl = base + "/voice/reminder-answer?reminder_id=" + r.getId() + "&appointment_id=" + a.getId();
-        String uuid = vobiz.placeCall(m1, p.getPhoneE164(), answerUrl, base + "/voice/hangup");
+        String answerUrl = signer.sign(base + "/voice/reminder-answer?reminder_id=" + r.getId()
+                + "&appointment_id=" + a.getId());
+        String uuid = vobiz.placeCall(m1, p.getPhoneE164(), answerUrl, signer.sign(base + "/voice/hangup"));
         callDao.insertOutboundReminder(uuid, p.getPhoneE164(), r.getId());
         r.setStatus("placed");
         r.setAttempts(r.getAttempts() + 1);
@@ -175,15 +182,43 @@ public class ReminderService {
                 mask(p.getPhoneE164()), uuid);
     }
 
+    /** A leg that lasted at least this long was listened to — never auto-redial it. */
+    public static final int ANSWERED_MIN_SEC = 5;
+
     /** Called from /voice/hangup for outbound legs that carry a reminder. */
     @Transactional
     public void onOutboundHangup(String callUuid) {
+        onOutboundHangup(callUuid, null);
+    }
+
+    /**
+     * Retry policy. Previously every hangup of an unattended reminder re-queued it, because a
+     * delivered reminder stayed in status 'placed' unless the patient pressed a key — so a
+     * patient who listened and hung up was dialled again and again.
+     *
+     * Now: a leg long enough to have been heard (Vobiz sends CallDuration on the hangup
+     * webhook) is finished as 'answered'; only short/unanswered legs are retried, and only
+     * while {@code attempt < reminder_retry_count} (so the setting is the number of *extra*
+     * attempts, not the total).
+     */
+    @Transactional
+    public void onOutboundHangup(String callUuid, Integer durationSec) {
         if (callUuid == null) return;
         reminderRepo.findByOutboundCallUuid(callUuid).ifPresent(r -> {
             if (!"placed".equals(r.getStatus())) return;
             Appointment a = appointmentRepo.findById(r.getAppointmentId()).orElse(null);
-            boolean stillWorthRetrying = a != null && a.getStartsAt().isAfter(Instant.now())
-                    && r.getAttempts() <= settings.reminderRetryCount();
+            if (durationSec != null && durationSec >= ANSWERED_MIN_SEC) {
+                r.setStatus("answered");
+                r.setErrorText(durationSec + "s call, no keypad response");
+                reminderRepo.save(r);
+                if (a != null) event(a, "reminder_answered", null,
+                        Map.of("kind", r.getKind(), "duration_sec", durationSec));
+                return;
+            }
+            boolean stillWorthRetrying = a != null
+                    && !CLOSED_STATUSES.contains(a.getStatus())
+                    && a.getStartsAt().isAfter(Instant.now())
+                    && r.getAttempts() < settings.reminderRetryCount();
             if (stillWorthRetrying) {
                 r.setStatus("pending");
                 r.setScheduledAt(rollIntoAllowedWindow(
@@ -193,7 +228,33 @@ public class ReminderService {
                 r.setStatus("no_answer");
             }
             reminderRepo.save(r);
+            if ("no_answer".equals(r.getStatus())) sendSmsFallback(a, r);
         });
+    }
+
+    /**
+     * SMS fallback: {@code sms_fallback_enabled} used to be a setting nobody read and an
+     * injectable {@link SmsService} nobody called. When the voice reminder is not answered
+     * (retries exhausted) the patient now gets one plain-text fallback, logged and attributed
+     * on the appointment timeline. The default bean still only logs — wire a provider to send.
+     */
+    private void sendSmsFallback(Appointment a, Reminder r) {
+        if (a == null || !settings.smsFallbackEnabled()) return;
+        Patient p = patientRepo.findById(a.getPatientId()).orElse(null);
+        if (p == null || p.getPhoneE164() == null || p.getPhoneE164().isBlank()) return;
+        if ("sms".equals(r.getChannel())) return;                 // never double-send
+        String when = java.time.format.DateTimeFormatter.ofPattern("EEE d MMM, h:mm a")
+                .withZone(settings.clinicZone()).format(a.getStartsAt());
+        String text = "Reminder from " + settings.clinicName() + ": appointment on " + when
+                + (a.getReferenceCode() == null ? "" : " (ref " + a.getReferenceCode() + ")") + ".";
+        try {
+            sms.send(p.getPhoneE164(), text);
+            r.setChannel("sms");                                   // recorded so a retry scan skips it
+            reminderRepo.save(r);
+            event(a, "sms_fallback_sent", null, Map.of("kind", r.getKind()));
+        } catch (Exception e) {
+            log.warn("SMS fallback for reminder {} failed: {}", r.getId(), e.getMessage());
+        }
     }
 
     /** Keypad response on a reminder call (1 confirm / 2 reschedule / 3 cancel). */
@@ -205,9 +266,11 @@ public class ReminderService {
         String type;
         switch (digit) {
             case "1" -> { r.setStatus("answered_confirmed"); type = "patient_confirmed"; }
-            case "2" -> { r.setStatus("answered_rescheduled"); type = "patient_rescheduled"; }
+            // "2" only connects the caller to reception — nothing is rescheduled yet, so the
+            // status must not claim otherwise (it used to say answered_rescheduled).
+            case "2" -> { r.setStatus("answered_reschedule_requested"); type = "patient_reschedule_requested"; }
             case "3" -> { r.setStatus("answered_cancelled"); type = "patient_cancelled"; }
-            default -> { r.setStatus("no_answer"); type = "reminder_sent"; }
+            default -> { r.setStatus("answered"); type = "reminder_answered"; }
         }
         Reminder saved = reminderRepo.save(r);
         Appointment a = appointmentRepo.findById(r.getAppointmentId()).orElse(null);
