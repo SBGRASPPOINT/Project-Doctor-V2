@@ -10,6 +10,16 @@
 #
 # Usage:  BASE=http://localhost:8080 ./scripts/simulate-appointment.sh
 set -euo pipefail
+
+# AuthFilter protects both halves of the surface. Pass the same values the server was started with:
+#   API_TOKEN=dev-token WEBHOOK_SECRET=dev-secret ./scripts/simulate-call.sh
+SECRET="${WEBHOOK_SECRET:-}"
+TOKEN="${API_TOKEN:-}"
+AUTH=()
+[ -n "$TOKEN" ] && AUTH=(-H "Authorization: Bearer $TOKEN")
+qs() { # qs <path> -> path with the webhook secret appended
+  if [ -z "$SECRET" ]; then printf '%s' "$1"; elif [[ "$1" == *"?"* ]]; then printf '%s&secret=%s' "$1" "$SECRET"; else printf '%s?secret=%s' "$1" "$SECRET"; fi
+}
 BASE="${BASE:-http://localhost:8080}"
 FROM="${FROM:-+919876543210}"          # demo patient seeded by DataSeeder
 M1="${M1:-+10000000000}"
@@ -19,7 +29,7 @@ post() { # post <path> <key=value>...
   local path="$1"; shift
   local args=()
   for kv in "$@"; do args+=(--data-urlencode "$kv"); done
-  curl -s -X POST "$BASE$path" "${args[@]}"
+  curl -s -X POST "$(qs "$BASE$path")" "${args[@]}"
 }
 
 say "1. inbound call on M1: POST /voice/answer (caller $FROM)"
@@ -43,8 +53,8 @@ say "6. confirm booking (digit 1): POST /voice/ivr/confirm"
 post "/voice/ivr/confirm?call_uuid=$C1" "CallUUID=$C1" "Digits=1"; echo
 
 say "7. appointments booked via IVR"
-curl -s "$BASE/api/appointments?q=&status=booked" | python3 -m json.tool | head -40
-REF=$(curl -s "$BASE/api/appointments?status=booked" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['items'][0]['reference_code'] if d['items'] else '')")
+curl -s ${AUTH[@]+"${AUTH[@]}"} "$BASE/api/appointments?q=&status=confirmed" | python3 -m json.tool | head -40
+REF=$(curl -s ${AUTH[@]+"${AUTH[@]}"} "$BASE/api/appointments?status=confirmed" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['items'][0]['reference_code'] if d['items'] else '')")
 echo "reference: ${REF:-<none>}"
 
 say "8. second call: reschedule that appointment (menu 2 -> pick 1 -> slot 1 -> confirm 1)"
@@ -68,21 +78,21 @@ post /voice/answer "CallUUID=$C4" "From=$FROM" "To=$M1" "CallStatus=ringing" > /
 post "/voice/ivr/menu?call_uuid=$C4" "CallUUID=$C4" "Digits=0"; echo
 
 say "11. outbound reminder call: /voice/reminder-answer then keypad confirm (digit 1)"
-REM=$(curl -s "$BASE/api/reminders?status=pending" | python3 -c "import json,sys; d=json.load(sys.stdin); it=d['items'][0] if d['items'] else {}; print(it.get('id',''), it.get('appointment_id',''))")
+REM=$(curl -s ${AUTH[@]+"${AUTH[@]}"} "$BASE/api/reminders?status=pending" | python3 -c "import json,sys; d=json.load(sys.stdin); it=d['items'][0] if d['items'] else {}; print(it.get('id',''), it.get('appointment_id',''))")
 RID=$(echo "$REM" | cut -d' ' -f1); AID=$(echo "$REM" | cut -d' ' -f2)
 if [ -n "$RID" ]; then
   C5="rem-$(date +%s)-$RANDOM"
-  curl -s "$BASE/voice/reminder-answer?reminder_id=$RID&appointment_id=$AID&call_uuid=$C5"; echo
+  curl -s "$(qs "$BASE/voice/reminder-answer?reminder_id=$RID&appointment_id=$AID&call_uuid=$C5")"; echo
   post "/voice/reminder-response?reminder_id=$RID&call_uuid=$C5" "CallUUID=$C5" "Digits=1"; echo
 else
   echo "(no pending reminder right now — book an appointment >2h out first, or POST /api/reminders/run)"
 fi
 
 say "12. appointment stats"
-curl -s "$BASE/api/stats/appointments" | python3 -m json.tool
+curl -s ${AUTH[@]+"${AUTH[@]}"} "$BASE/api/stats/appointments" | python3 -m json.tool
 
 say "13. appointments after the demo"
-curl -s "$BASE/api/appointments?limit=10" | python3 -c "
+curl -s ${AUTH[@]+"${AUTH[@]}"} "$BASE/api/appointments?limit=10" | python3 -c "
 import json,sys
 d=json.load(sys.stdin)
 for a in d['items']:
@@ -90,7 +100,7 @@ for a in d['items']:
 "
 
 say "14. reminders after the demo"
-curl -s "$BASE/api/reminders?limit=10" | python3 -c "
+curl -s ${AUTH[@]+"${AUTH[@]}"} "$BASE/api/reminders?limit=10" | python3 -c "
 import json,sys
 d=json.load(sys.stdin)
 for r in d['items']:

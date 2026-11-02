@@ -12,7 +12,6 @@ import com.vobiz.masking.appointment.repo.MessageTemplateRepository;
 import com.vobiz.masking.appointment.repo.PatientRepository;
 import com.vobiz.masking.appointment.repo.ReminderDao;
 import com.vobiz.masking.appointment.repo.ReminderRepository;
-import com.vobiz.masking.appointment.repo.WaitlistEntryRepository;
 import com.vobiz.masking.appointment.service.AppointmentIvrService;
 import com.vobiz.masking.appointment.service.AppointmentService;
 import com.vobiz.masking.appointment.service.AvailabilityService;
@@ -25,6 +24,7 @@ import com.vobiz.masking.appointment.service.ScheduleService;
 import com.vobiz.masking.appointment.service.SmsService;
 import com.vobiz.masking.repo.AgentDao;
 import com.vobiz.masking.repo.AgentRepository;
+import com.vobiz.masking.security.WebhookSigner;
 import com.vobiz.masking.repo.CallDao;
 import com.vobiz.masking.repo.CallRepository;
 import com.vobiz.masking.repo.CallbackDao;
@@ -56,6 +56,17 @@ import org.springframework.jdbc.core.JdbcTemplate;
 public class AppBeans {
 
     private static final Logger log = LogManager.getLogger(AppBeans.class);
+
+    /** Signs every URL handed to Vobiz so AuthFilter can tell real webhooks from made-up ones. */
+    @Bean
+    WebhookSigner webhookSigner(AppProperties app) {
+        WebhookSigner signer = new WebhookSigner(app.getWebhookSecret());
+        if (!signer.isEnabled())
+            log.warn("app.webhook-secret is empty — /voice/** webhooks are UNSIGNED (development only)");
+        if (app.getApiToken() == null || app.getApiToken().isBlank())
+            log.warn("app.api-token is empty — /api/** is UNAUTHENTICATED (development only)");
+        return signer;
+    }
 
     // ---------- masking core (unchanged) ----------
 
@@ -96,9 +107,9 @@ public class AppBeans {
 
     @Bean
     CallFlowService callFlowService(CallDao callDao, CallbackDao callbackDao, SettingsService settings,
-                                    RoutingService routing, AppProperties app) {
+                                    RoutingService routing, AppProperties app, WebhookSigner signer) {
         return new CallFlowService(callDao, callbackDao, settings, routing,
-                trimSlash(app.getPublicBaseUrl()), app.getDefaultM1Number());
+                trimSlash(app.getPublicBaseUrl()), app.getDefaultM1Number(), signer);
     }
 
     @Bean
@@ -108,9 +119,10 @@ public class AppBeans {
 
     @Bean
     CallbackService callbackService(CallbackDao callbackDao, AgentDao agentDao, RoutingService routing,
-                                    CallDao callDao, SettingsService settings, VobizClient vobiz, AppProperties app) {
+                                    CallDao callDao, SettingsService settings, VobizClient vobiz, AppProperties app,
+                                    WebhookSigner signer) {
         return new CallbackService(callbackDao, agentDao, routing, callDao, settings, vobiz,
-                trimSlash(app.getPublicBaseUrl()), app.getDefaultM1Number());
+                trimSlash(app.getPublicBaseUrl()), app.getDefaultM1Number(), signer);
     }
 
     // ---------- appointment domain ----------
@@ -140,16 +152,18 @@ public class AppBeans {
     @Bean
     ReminderService reminderService(ReminderRepository reminderRepo, AppointmentRepository appointmentRepo,
                                     AppointmentEventRepository eventRepo, PatientRepository patientRepo,
-                                    CallDao callDao, VobizClient vobiz, SettingsService settings, AppProperties app) {
-        return new ReminderService(reminderRepo, appointmentRepo, eventRepo, patientRepo, callDao, vobiz, settings, app);
+                                    CallDao callDao, VobizClient vobiz, SettingsService settings,
+                                    AppProperties app, WebhookSigner signer, SmsService smsService) {
+        return new ReminderService(reminderRepo, appointmentRepo, eventRepo, patientRepo, callDao, vobiz,
+                settings, app, signer, smsService);
     }
 
     @Bean
     AppointmentService appointmentService(AppointmentRepository appointmentRepo, AppointmentEventRepository eventRepo,
                                           PatientRepository patientRepo, DoctorRepository doctorRepo,
-                                          WaitlistEntryRepository waitlistRepo, AvailabilityService availability,
-                                          ReminderService reminders, SettingsService settings) {
-        return new AppointmentService(appointmentRepo, eventRepo, patientRepo, doctorRepo, waitlistRepo,
+                                          AvailabilityService availability, ReminderService reminders,
+                                          SettingsService settings) {
+        return new AppointmentService(appointmentRepo, eventRepo, patientRepo, doctorRepo,
                 availability, reminders, settings);
     }
 
@@ -187,9 +201,9 @@ public class AppBeans {
                                                 AvailabilityService availability, AppointmentService appointments,
                                                 ReminderService reminders, SettingsService settings,
                                                 PromptService prompts, CallFlowService callFlow, CallDao callDao,
-                                                AppProperties app) {
+                                                AppProperties app, WebhookSigner signer) {
         return new AppointmentIvrService(sessions, patients, departments, doctors, availability, appointments,
-                reminders, settings, prompts, callFlow, callDao, trimSlash(app.getPublicBaseUrl()));
+                reminders, settings, prompts, callFlow, callDao, trimSlash(app.getPublicBaseUrl()), signer);
     }
 
     // ---------- web ----------

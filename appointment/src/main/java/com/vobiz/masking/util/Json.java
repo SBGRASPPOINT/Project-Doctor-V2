@@ -12,6 +12,10 @@ import java.util.Map;
  */
 public final class Json {
 
+    /** Nesting cap — a deep body used to overflow the parser's stack (a StackOverflowError is an
+     *  Error, so the dispatcher's catch(Exception) never saw it) and take the request thread down. */
+    static final int MAX_DEPTH = 32;
+
     private Json() {
     }
 
@@ -97,7 +101,7 @@ public final class Json {
         if (text == null || text.isBlank()) throw new ApiException(400, "Empty JSON body");
         Parser p = new Parser(text);
         p.skipWs();
-        Object v = p.readValue();
+        Object v = p.readValue(0);
         p.skipWs();
         if (!p.atEnd()) throw new ApiException(400, "Trailing characters in JSON at position " + p.pos);
         return v;
@@ -126,13 +130,14 @@ public final class Json {
             while (pos < s.length() && Character.isWhitespace(s.charAt(pos))) pos++;
         }
 
-        Object readValue() {
+        Object readValue(int depth) {
             skipWs();
             if (atEnd()) throw new ApiException(400, "Unexpected end of JSON");
+            if (depth > MAX_DEPTH) throw new ApiException(400, "JSON nesting too deep (max " + MAX_DEPTH + ")");
             char c = s.charAt(pos);
             return switch (c) {
-                case '{' -> readObject();
-                case '[' -> readArray();
+                case '{' -> readObject(depth);
+                case '[' -> readArray(depth);
                 case '"' -> readString();
                 case 't' -> {
                     expect("true");
@@ -155,7 +160,7 @@ public final class Json {
             pos += lit.length();
         }
 
-        private Map<String, Object> readObject() {
+        private Map<String, Object> readObject(int depth) {
             Map<String, Object> m = new LinkedHashMap<>();
             pos++; // consume '{'
             skipWs();
@@ -172,7 +177,7 @@ public final class Json {
                 if (atEnd() || s.charAt(pos) != ':')
                     throw new ApiException(400, "Expected ':' at position " + pos);
                 pos++;
-                m.put(key, readValue());
+                m.put(key, readValue(depth + 1));
                 skipWs();
                 if (atEnd()) throw new ApiException(400, "Unterminated JSON object");
                 char c = s.charAt(pos);
@@ -188,7 +193,7 @@ public final class Json {
             }
         }
 
-        private List<Object> readArray() {
+        private List<Object> readArray(int depth) {
             List<Object> list = new ArrayList<>();
             pos++; // consume '['
             skipWs();
@@ -197,7 +202,7 @@ public final class Json {
                 return list;
             }
             while (true) {
-                list.add(readValue());
+                list.add(readValue(depth + 1));
                 skipWs();
                 if (atEnd()) throw new ApiException(400, "Unterminated JSON array");
                 char c = s.charAt(pos);
@@ -234,7 +239,13 @@ public final class Json {
                         case 't' -> sb.append('\t');
                         case 'u' -> {
                             if (pos + 4 > s.length()) throw new ApiException(400, "Bad \\u escape");
-                            sb.append((char) Integer.parseInt(s.substring(pos, pos + 4), 16));
+                            String hex = s.substring(pos, pos + 4);
+                            try {
+                                sb.append((char) Integer.parseInt(hex, 16));
+                            } catch (NumberFormatException ex) {
+                                // was an uncaught NumberFormatException -> HTTP 500 instead of 400
+                                throw new ApiException(400, "Bad \\u escape '" + hex + "'");
+                            }
                             pos += 4;
                         }
                         default -> throw new ApiException(400, "Bad escape '\\" + e + "'");

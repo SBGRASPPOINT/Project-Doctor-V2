@@ -41,12 +41,34 @@ function toast(msg, isErr) {
     t.classList.remove("hidden");
 }
 
+// The API is bearer-token protected (API_TOKEN on the server). The token is kept in
+// sessionStorage and asked for once per browser session; it is never bundled in the page.
+const TOKEN_KEY = "appointment-api-token";
+let tokenRejected = false;      // stop re-prompting on every 5s refresh after a rejection
+function apiToken() {
+    let t = sessionStorage.getItem(TOKEN_KEY) || "";
+    if (!t && !tokenRejected) {
+        t = window.prompt("API token (API_TOKEN on the server):") || "";
+        if (t) sessionStorage.setItem(TOKEN_KEY, t);
+        else tokenRejected = true;   // operator cancelled: don't nag on every poll
+    }
+    return t;
+}
+
 async function api(method, path, body) {
+    const headers = body !== undefined ? { "Content-Type": "application/json" } : {};
+    const token = apiToken();
+    if (token) headers.Authorization = "Bearer " + token;
     const res = await fetch(path, {
         method,
-        headers: body !== undefined ? { "Content-Type": "application/json" } : {},
+        headers,
         body: body !== undefined ? JSON.stringify(body) : undefined,
     });
+    if (res.status === 401) {
+        sessionStorage.removeItem(TOKEN_KEY);   // wrong/expired token
+        tokenRejected = true;
+        throw new Error("Not authorised — reload the page and enter the API token");
+    }
     const text = await res.text();
     let data = null;
     try { data = text ? JSON.parse(text) : null; } catch { data = { raw: text }; }
@@ -215,7 +237,7 @@ function renderDashboard() {
         card(a.appointments_today || 0, "today") +
         card(a.appointments_confirmed || 0, "confirmed") +
         card(a.appointments_cancelled || 0, "cancelled") +
-        card(a.appointments_ivr || 0, "booked by phone (IVR)") +
+        card(a.appointments_by_ivr || 0, "booked by phone (IVR)") +
         card(a.reminders_pending || 0, "reminders pending") +
         card(a.reminders_confirmed || 0, "reminders confirmed") +
         card(a.reminders_no_answer || 0, "no answer");
@@ -249,7 +271,7 @@ function renderAppointments() {
             <td>${esc(a.source || "")}</td>
             <td>${esc(a.reason || "")}</td>
             <td>
-                ${a.status === "booked" || a.status === "confirmed" || a.status === "rescheduled" ? `
+                ${["requested", "confirmed", "rescheduled"].includes(a.status) ? `
                 <button data-action="apt-complete" data-id="${a.id}">complete</button>
                 <button data-action="apt-noshow" data-id="${a.id}">no-show</button>
                 <button data-action="apt-reschedule" data-id="${a.id}">reschedule</button>
@@ -307,7 +329,7 @@ function renderDoctors() {
         ? `<table><thead><tr><th>name</th><th>specialization</th><th>department</th><th>slot min</th><th>active</th><th></th></tr></thead><tbody>${rows}</tbody></table>`
         : `<p class="muted">No doctors yet.</p>`;
 
-    const dow = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+    const dow = ["", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];   // ISO: 1..7
     $("#schedules-table").innerHTML = state.schedules.length
         ? `<table><thead><tr><th>day</th><th>from</th><th>to</th><th>slot</th><th></th></tr></thead><tbody>` +
           state.schedules.map((s) => `<tr>

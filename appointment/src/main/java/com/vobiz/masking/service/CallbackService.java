@@ -5,6 +5,7 @@ import com.vobiz.masking.model.CallbackRequest;
 import com.vobiz.masking.repo.AgentDao;
 import com.vobiz.masking.repo.CallDao;
 import com.vobiz.masking.repo.CallbackDao;
+import com.vobiz.masking.security.WebhookSigner;
 import com.vobiz.masking.util.ApiException;
 import com.vobiz.masking.vobiz.VobizClient;
 import org.apache.logging.log4j.LogManager;
@@ -35,9 +36,11 @@ public class CallbackService {
     private final VobizClient vobiz;
     private final String publicBaseUrl;
     private final String defaultM1;
+    private final WebhookSigner signer;
 
     public CallbackService(CallbackDao callbackDao, AgentDao agentDao, RoutingService routing, CallDao callDao,
-                           SettingsService settings, VobizClient vobiz, String publicBaseUrl, String defaultM1) {
+                           SettingsService settings, VobizClient vobiz, String publicBaseUrl, String defaultM1,
+                           WebhookSigner signer) {
         this.callbackDao = callbackDao;
         this.agentDao = agentDao;
         this.routing = routing;
@@ -46,6 +49,7 @@ public class CallbackService {
         this.vobiz = vobiz;
         this.publicBaseUrl = publicBaseUrl;
         this.defaultM1 = defaultM1;
+        this.signer = signer;
     }
 
     /** POST /api/callbacks/{id}/call — place the outbound click-to-call leg. */
@@ -74,7 +78,8 @@ public class CallbackService {
                 + "&callback_id=" + cb.getId();
         String uuid;
         try {
-            uuid = vobiz.placeCall(m1, agent.getPhoneE164(), answerUrl, publicBaseUrl + "/voice/hangup");
+            uuid = vobiz.placeCall(m1, agent.getPhoneE164(), signer.sign(answerUrl),
+                    signer.sign(publicBaseUrl + "/voice/hangup"));
         } catch (ApiException e) {
             throw e;
         } catch (Exception e) {
