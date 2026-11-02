@@ -37,18 +37,7 @@ public final class Json {
             sb.append("null");
         } else if (v instanceof String s) {
             writeString(sb, s);
-        } else if (v instanceof Boolean) {
-            sb.append(v);
-        } else if (v instanceof Number) {
-            // Render integral floating-point values without a trailing ".0": a value that came in
-            // as 7.0 must not round-trip out as "7.0" when 7 is what the caller sent.
-            if (v instanceof Double || v instanceof Float) {
-                double d = ((Number) v).doubleValue();
-                if (Double.isFinite(d) && d == Math.rint(d) && Math.abs(d) < 1e15) {
-                    sb.append((long) d);
-                    return;
-                }
-            }
+        } else if (v instanceof Boolean || v instanceof Number) {
             sb.append(v);
         } else if (v instanceof Jsonable j) {
             writeValue(sb, j.toMap());
@@ -286,8 +275,12 @@ public final class Json {
             }
             if (start == pos) throw new ApiException(400, "Invalid JSON value at position " + pos);
             String num = s.substring(start, pos);
+            // Do NOT fold these into one ternary: `cond ? double : long` is subject to binary
+            // numeric promotion, so the whole expression has type double and every integer in a
+            // body came back as a Double ("1" -> 1.0), making (Long) casts on parsed bodies throw.
             try {
-                return floating ? Double.parseDouble(num) : Long.parseLong(num);
+                if (floating) return Double.parseDouble(num);
+                return Long.parseLong(num);
             } catch (NumberFormatException e) {
                 throw new ApiException(400, "Invalid number '" + num + "'");
             }
