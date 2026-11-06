@@ -1,6 +1,7 @@
 package com.vobiz.masking.security;
 
 import com.vobiz.masking.config.AppProperties;
+import com.vobiz.masking.whatsapp.security.WhatsAppAccessService;
 import com.vobiz.masking.util.Json;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
@@ -8,6 +9,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
@@ -24,7 +26,8 @@ import java.util.Map;
  * <ul>
  *   <li><b>/api/**</b> (patient list, appointment CRUD, settings, "place a call now") requires
  *       {@code Authorization: Bearer <app.api-token>}. {@code /api/health} stays open so a load
- *       balancer can probe it.</li>
+ *       balancer can probe it. The dedicated {@code /api/whatsapp/**} routes additionally accept
+ *       individual, permission-scoped staff tokens; the master API token remains the inbox admin.</li>
  *   <li><b>/voice/**</b> (the Vobiz webhooks that book, cancel, set recordings and hangup
  *       outcomes) requires the {@code app.webhook-secret} via {@code ?secret=} or the
  *       {@code X-Webhook-Secret} header. Every URL this service generates is signed by
@@ -34,9 +37,10 @@ import java.util.Map;
  * </ul>
  *
  * Both checks are skipped when the corresponding value is not configured (local development),
- * and {@code ConfigValidator} logs a loud warning in that case. This is deliberately a plain
- * servlet filter rather than Spring Security: the console is a single-operator tool and this
- * keeps the webhook path dependency-free — swap in Spring Security when roles/audit are needed.
+ * and {@code ConfigValidator} logs a loud warning in that case. This remains a plain servlet
+ * filter rather than Spring Security: the main console is single-operator, while the shared inbox
+ * has its own narrowly scoped staff tokens. Adopt Spring Security if broader application roles
+ * or centralized audit requirements are introduced.
  */
 @Component
 @Order(Ordered.HIGHEST_PRECEDENCE + 10)
@@ -46,10 +50,17 @@ public class AuthFilter extends OncePerRequestFilter {
 
     private final String apiToken;
     private final WebhookSigner webhookSigner;
+    private final WebhookSigner vobizWhatsappWebhookSigner;
+    private final WhatsAppAccessService whatsappAccess;
 
-    public AuthFilter(AppProperties props, WebhookSigner webhookSigner) {
+    public AuthFilter(AppProperties props,
+                      @Qualifier("webhookSigner") WebhookSigner webhookSigner,
+                      @Qualifier("vobizWhatsappWebhookSigner") WebhookSigner vobizWhatsappWebhookSigner,
+                      WhatsAppAccessService whatsappAccess) {
         this.apiToken = props.getApiToken() == null ? "" : props.getApiToken().trim();
         this.webhookSigner = webhookSigner;
+        this.vobizWhatsappWebhookSigner = vobizWhatsappWebhookSigner;
+        this.whatsappAccess = whatsappAccess;
     }
 
     @Override
@@ -63,7 +74,21 @@ public class AuthFilter extends OncePerRequestFilter {
             return;
         }
 
-        if (path.startsWith("/api/") && !path.equals("/api/health")) {
+        if (isWhatsAppApiPath(path)) {
+            WhatsAppPrincipal principal;
+            if (apiToken.isEmpty() || bearerMatches(request.getHeader("Authorization"))) {
+                // In development, an unset API_TOKEN retains the existing open-API behavior.
+                principal = WhatsAppPrincipal.administrator();
+            } else {
+                principal = whatsappAccess.authenticate(request.getHeader("Authorization"));
+            }
+            if (principal == null) {
+                log.warn("Rejected unauthenticated {} {} from {}", method, path, request.getRemoteAddr());
+                denyApi(response, "Missing or invalid WhatsApp staff token or admin API token.");
+                return;
+            }
+            request.setAttribute(WhatsAppPrincipal.REQUEST_ATTRIBUTE, principal);
+        } else if (path.startsWith("/api/") && !path.equals("/api/health")) {
             if (!apiToken.isEmpty() && !bearerMatches(request.getHeader("Authorization"))) {
                 log.warn("Rejected unauthenticated {} {} from {}", method, path, request.getRemoteAddr());
                 denyApi(response, "Missing or invalid API token (Authorization: Bearer …)");
@@ -79,9 +104,30 @@ public class AuthFilter extends OncePerRequestFilter {
                     return;
                 }
             }
+        } else if (path.startsWith("/webhooks/vobiz/")) {
+            if (vobizWhatsappWebhookSigner.isEnabled()) {
+                String presented = request.getHeader(WebhookSigner.HEADER);
+                if (presented == null || presented.isBlank()) presented = request.getParameter(WebhookSigner.PARAM);
+                if (!vobizWhatsappWebhookSigner.matches(presented)) {
+                    log.warn("Rejected unsigned Vobiz messaging webhook {} {} from {}", method, path, request.getRemoteAddr());
+                    denyWebhook(response);
+                    return;
+                }
+            }
         }
 
         chain.doFilter(request, response);
+    }
+
+    /** Keep staff tokens on literal WhatsApp routes; never let encoded/traversal paths inherit the scope. */
+    private boolean isWhatsAppApiPath(String path) {
+        if ("/api/whatsapp".equals(path)) return true;
+        if (path == null || !path.startsWith("/api/whatsapp/")
+                || path.indexOf('%') >= 0 || path.indexOf('\\') >= 0 || path.indexOf(';') >= 0) return false;
+        for (String segment : path.split("/")) {
+            if (".".equals(segment) || "..".equals(segment)) return false;
+        }
+        return true;
     }
 
     private boolean bearerMatches(String header) {
@@ -98,6 +144,12 @@ public class AuthFilter extends OncePerRequestFilter {
         response.setContentType("application/json; charset=UTF-8");
         response.setHeader("WWW-Authenticate", "Bearer realm=\"ops-console\"");
         response.getWriter().write(Json.write(Map.of("error", message)));
+    }
+
+    private void denyWebhook(HttpServletResponse response) throws IOException {
+        response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+        response.setContentType("application/json; charset=UTF-8");
+        response.getWriter().write(Json.write(Map.of("error", "Invalid Vobiz webhook secret.")));
     }
 
     /** Voice: answer with a well-formed (empty) Response so the call ends cleanly, not with a retry loop. */

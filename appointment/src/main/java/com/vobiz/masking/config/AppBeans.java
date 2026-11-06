@@ -37,9 +37,17 @@ import com.vobiz.masking.service.CallbackService;
 import com.vobiz.masking.service.RoutingService;
 import com.vobiz.masking.service.SettingsService;
 import com.vobiz.masking.vobiz.VobizClient;
+import com.vobiz.masking.vobiz.VobizWhatsAppClient;
+import com.vobiz.masking.whatsapp.WhatsAppService;
+import com.vobiz.masking.whatsapp.WhatsAppTransport;
+import com.vobiz.masking.whatsapp.repo.WhatsAppConversationRepository;
+import com.vobiz.masking.whatsapp.repo.WhatsAppMessageRepository;
+import com.vobiz.masking.whatsapp.repo.WhatsAppStaffAccessRepository;
+import com.vobiz.masking.whatsapp.security.WhatsAppAccessService;
 import com.vobiz.masking.web.Handlers;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -66,6 +74,11 @@ public class AppBeans {
         if (app.getApiToken() == null || app.getApiToken().isBlank())
             log.warn("app.api-token is empty — /api/** is UNAUTHENTICATED (development only)");
         return signer;
+    }
+
+    @Bean
+    WebhookSigner vobizWhatsappWebhookSigner(VobizProperties properties) {
+        return new WebhookSigner(properties.getWhatsappWebhookSecret());
     }
 
     // ---------- masking core (unchanged) ----------
@@ -107,7 +120,8 @@ public class AppBeans {
 
     @Bean
     CallFlowService callFlowService(CallDao callDao, CallbackDao callbackDao, SettingsService settings,
-                                    RoutingService routing, AppProperties app, WebhookSigner signer) {
+                                    RoutingService routing, AppProperties app,
+                                    @Qualifier("webhookSigner") WebhookSigner signer) {
         return new CallFlowService(callDao, callbackDao, settings, routing,
                 trimSlash(app.getPublicBaseUrl()), app.getDefaultM1Number(), signer);
     }
@@ -120,7 +134,7 @@ public class AppBeans {
     @Bean
     CallbackService callbackService(CallbackDao callbackDao, AgentDao agentDao, RoutingService routing,
                                     CallDao callDao, SettingsService settings, VobizClient vobiz, AppProperties app,
-                                    WebhookSigner signer) {
+                                    @Qualifier("webhookSigner") WebhookSigner signer) {
         return new CallbackService(callbackDao, agentDao, routing, callDao, settings, vobiz,
                 trimSlash(app.getPublicBaseUrl()), app.getDefaultM1Number(), signer);
     }
@@ -153,7 +167,8 @@ public class AppBeans {
     ReminderService reminderService(ReminderRepository reminderRepo, AppointmentRepository appointmentRepo,
                                     AppointmentEventRepository eventRepo, PatientRepository patientRepo,
                                     CallDao callDao, VobizClient vobiz, SettingsService settings,
-                                    AppProperties app, WebhookSigner signer, SmsService smsService) {
+                                    AppProperties app, @Qualifier("webhookSigner") WebhookSigner signer,
+                                    SmsService smsService) {
         return new ReminderService(reminderRepo, appointmentRepo, eventRepo, patientRepo, callDao, vobiz,
                 settings, app, signer, smsService);
     }
@@ -201,9 +216,32 @@ public class AppBeans {
                                                 AvailabilityService availability, AppointmentService appointments,
                                                 ReminderService reminders, SettingsService settings,
                                                 PromptService prompts, CallFlowService callFlow, CallDao callDao,
-                                                AppProperties app, WebhookSigner signer) {
+                                                AppProperties app,
+                                                @Qualifier("webhookSigner") WebhookSigner signer) {
         return new AppointmentIvrService(sessions, patients, departments, doctors, availability, appointments,
                 reminders, settings, prompts, callFlow, callDao, trimSlash(app.getPublicBaseUrl()), signer);
+    }
+
+    // ---------- shared WhatsApp inbox (Vobiz Messaging API; wired through DI) ----------
+
+    @Bean
+    WhatsAppTransport whatsappTransport(VobizProperties properties) {
+        return new VobizWhatsAppClient(properties);
+    }
+
+    @Bean
+    WhatsAppAccessService whatsappAccessService(WhatsAppStaffAccessRepository repository) {
+        return new WhatsAppAccessService(repository);
+    }
+
+    @Bean
+    WhatsAppService whatsappService(WhatsAppConversationRepository conversations,
+                                    WhatsAppMessageRepository messages,
+                                    WhatsAppTransport transport,
+                                    VobizProperties properties,
+                                    SettingsService settings,
+                                    AppProperties app) {
+        return new WhatsAppService(conversations, messages, transport, properties, settings, app);
     }
 
     // ---------- web ----------

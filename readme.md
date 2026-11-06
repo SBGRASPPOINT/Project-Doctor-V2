@@ -4,7 +4,7 @@ Two applications live in this repository:
 
 | Path | What it is | Stack |
 |---|---|---|
-| `appointment/` | **Call-first appointment system** on top of the Vobiz call-masking service: one public DID (M1), keypad IVR booking/reschedule/cancel, doctor schedules, automated voice reminders, ops console. | Java 25, Spring Boot 4.1, PostgreSQL 17, Gradle 9.8 |
+| `appointment/` | **Call-first appointment system** on top of Vobiz: one public DID (M1), keypad IVR booking/reschedule/cancel, doctor schedules, voice reminders, plus a shared Vobiz WhatsApp inbox with staff access tokens. | Java 25, Spring Boot 4.1, PostgreSQL 17, Gradle 9.8 |
 | `/` (root), `Admin/`, `Doctor/`, `Chemist/`, `Patient/` | **Prescription management**: a small MySQL API plus static HTML dashboards for doctors, chemists, patients and admins. | Node 20+, Express 5, MySQL 8, plain HTML/JS |
 
 Start with [`appointment/README.md`](appointment/README.md) for the telephony side and

@@ -675,7 +675,7 @@ function showTab(tab) {
 }
 
 document.addEventListener("DOMContentLoaded", () => {
-    document.querySelectorAll(".tab").forEach((b) => b.addEventListener("click", () => showTab(b.dataset.tab)));
+    document.querySelectorAll("button.tab").forEach((b) => b.addEventListener("click", () => showTab(b.dataset.tab)));
 
     document.addEventListener("click", async (e) => {
         const el = e.target.closest("[data-action]");

@@ -42,7 +42,7 @@ public class VobizClient {
         this.authId = authId == null ? "" : authId.trim();
         this.authToken = authToken == null ? "" : authToken.trim();
         this.apiBase = (apiBase == null || apiBase.isBlank())
-                ? "https://api.vobiz.example.com"
+                ? "https://api.vobiz.ai"
                 : apiBase.trim().replaceAll("/+$", "");
         this.mock = mock || this.authId.isEmpty() || this.authToken.isEmpty();
     }

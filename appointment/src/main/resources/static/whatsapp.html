@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#101820">
+    <title>WhatsApp Shared Inbox — Appointment Service</title>
+    <link rel="stylesheet" href="styles.css">
+    <link rel="stylesheet" href="whatsapp.css">
+</head>
+<body class="whatsapp-page">
+<header class="wa-header">
+    <div class="wa-brand">
+        <div class="wa-brand-icon" aria-hidden="true">W</div>
+        <div>
+            <h1>WhatsApp inbox</h1>
+            <p>One clinic number · one shared conversation history</p>
+        </div>
+    </div>
+    <div class="wa-header-actions">
+        <span id="wa-number-label" class="wa-number-label"></span>
+        <span id="wa-connection" class="wa-connection">Not connected</span>
+        <a class="wa-back-link" href="/">Appointment console</a>
+        <button id="wa-logout" class="secondary hidden" type="button">Sign out</button>
+    </div>
+</header>
+
+<main class="wa-main">
+    <section id="wa-connect" class="wa-connect-card">
+        <div class="wa-connect-mark" aria-hidden="true">↔</div>
+        <h2>Sign in to the clinic inbox</h2>
+        <p>Use the personal WhatsApp access token assigned to you. An administrator can sign in with the server API token to manage staff access.</p>
+        <form id="wa-connect-form" class="wa-connect-form">
+            <label for="wa-token">Access token</label>
+            <input id="wa-token" type="password" autocomplete="current-password" placeholder="Paste your WhatsApp access token">
+            <button type="submit">Open inbox</button>
+        </form>
+        <p id="wa-connect-error" class="wa-error hidden" role="alert"></p>
+        <p class="wa-connect-footnote">Staff access is limited to WhatsApp. The administrator token also manages staff access and should not be shared. In local development only, leave this blank if the server has no API_TOKEN.</p>
+    </section>
+
+    <section id="wa-inbox" class="wa-inbox hidden">
+        <aside class="wa-sidebar">
+            <div class="wa-sidebar-heading">
+                <div>
+                    <p class="wa-eyebrow">SHARED TEAM INBOX</p>
+                    <h2>Conversations <span id="wa-conversation-count" class="wa-count">0</span></h2>
+                </div>
+                <button id="wa-refresh" class="secondary wa-icon-button" type="button" aria-label="Refresh conversations" title="Refresh">↻</button>
+            </div>
+
+            <label class="wa-search-label" for="wa-search">Search</label>
+            <input id="wa-search" class="wa-search" type="search" placeholder="Name or phone number">
+
+            <details class="wa-new-chat">
+                <summary>＋ Start a conversation</summary>
+                <form id="wa-new-chat-form" class="wa-new-chat-form">
+                    <label for="wa-new-phone">Patient number (E.164)</label>
+                    <input id="wa-new-phone" name="phone_e164" type="tel" inputmode="tel" placeholder="+919876543210" required maxlength="32">
+                    <label for="wa-new-name">Name (optional)</label>
+                    <input id="wa-new-name" name="contact_name" type="text" placeholder="Patient name" maxlength="120">
+                    <button type="submit">Create conversation</button>
+                    <p class="wa-help">Only message people who opted in. This inbox sends free-form text only; outside WhatsApp's 24-hour window, an approved template is required but not yet supported here.</p>
+                </form>
+            </details>
+
+            <div id="wa-conversation-list" class="wa-conversation-list" role="list" aria-label="WhatsApp conversations">
+                <p class="wa-empty-list">Sign in to load conversations.</p>
+            </div>
+
+            <details id="wa-access-admin" class="wa-access-admin hidden">
+                <summary>Manage staff access</summary>
+                <p class="wa-help">Each access token is personal, WhatsApp-only, and shown once. Revoke or rotate a lost token here.</p>
+                <form id="wa-staff-form" class="wa-staff-form">
+                    <label for="wa-staff-name">Staff member</label>
+                    <input id="wa-staff-name" name="name" required maxlength="120" placeholder="Name">
+                    <label for="wa-staff-role">Role</label>
+                    <select id="wa-staff-role" name="role">
+                        <option value="agent">Agent</option>
+                        <option value="compounder">Compounder</option>
+                    </select>
+                    <div class="wa-permission-row">
+                        <label><input type="checkbox" name="can_read" checked> Can view</label>
+                        <label><input type="checkbox" name="can_send" checked> Can send</label>
+                    </div>
+                    <button type="submit">Create staff access</button>
+                </form>
+                <div id="wa-issued-token" class="wa-issued-token hidden" role="status">
+                    <strong>Copy this token now — it cannot be viewed again.</strong>
+                    <code id="wa-issued-token-value"></code>
+                    <button id="wa-copy-token" class="secondary" type="button">Copy token</button>
+                </div>
+                <div id="wa-staff-list" class="wa-staff-list"></div>
+            </details>
+
+            <div class="wa-shared-note">
+                <span aria-hidden="true">●</span>
+                <span>Messages and replies are shared with every active staff account that has inbox access.</span>
+            </div>
+        </aside>
+
+        <section class="wa-thread" aria-label="Conversation thread">
+            <div id="wa-thread-empty" class="wa-thread-empty">
+                <div class="wa-empty-icon" aria-hidden="true">✉</div>
+                <h2>Select a conversation</h2>
+                <p>Choose a patient on the left or start a new conversation. Replies appear here for the whole team.</p>
+            </div>
+            <div id="wa-thread-view" class="wa-thread-view hidden">
+                <div class="wa-thread-heading">
+                    <div class="wa-contact-avatar" id="wa-contact-avatar" aria-hidden="true">?</div>
+                    <div class="wa-contact-details">
+                        <h2 id="wa-contact-name">Contact</h2>
+                        <p id="wa-contact-phone"></p>
+                    </div>
+                    <div class="wa-thread-tools">
+                        <span id="wa-thread-shared" class="wa-shared-tag">Shared</span>
+                    </div>
+                </div>
+                <div id="wa-send-warning" class="wa-warning hidden" role="status"></div>
+                <div id="wa-messages" class="wa-messages" role="log" aria-live="polite" aria-relevant="additions text"></div>
+                <form id="wa-compose" class="wa-compose">
+                    <label class="visually-hidden" for="wa-message">Message</label>
+                    <textarea id="wa-message" name="text" rows="2" maxlength="4096" placeholder="Write a WhatsApp message…" required></textarea>
+                    <div class="wa-compose-footer">
+                        <span id="wa-compose-hint">Replies are visible to every staff member with inbox access.</span>
+                        <span id="wa-char-count">0 / 4096</span>
+                        <button id="wa-send" type="submit">Send</button>
+                    </div>
+                </form>
+            </div>
+        </section>
+    </section>
+
+    <div id="wa-toast" class="wa-toast hidden" role="status" aria-live="polite"></div>
+</main>
+<script src="whatsapp.js"></script>
+</body>
+</html>

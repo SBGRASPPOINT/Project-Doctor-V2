@@ -5,7 +5,7 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test": "node --check server.js && node --check Admin/Admin.js && node --check Patient/patient.js"
+    "test": "node --check server.js && node --check Admin/Admin.js && node --check Patient/patient.js && node --check appointment/src/main/resources/static/app.js && node --check appointment/src/main/resources/static/whatsapp.js"
   },
   "repository": {
     "type": "git",
